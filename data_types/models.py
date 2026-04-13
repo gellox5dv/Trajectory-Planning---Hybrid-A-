@@ -170,7 +170,7 @@ class GoalRegion:
 
 @dataclass
 class PlanningRequest:
-    start_state: EgoState       # initial state for planning (latency compensated)
+    start_state: EgoState       # initial state for planning 
 
     goal_region: GoalRegion     # target region
 
@@ -202,4 +202,4 @@ class PlanResult:
 
     cost: float                     # total trajectory cost
 
-    status_message: str             # diagnostic info (e.g. "SUCCESS", "TIMEOUT")
+    status_message: str             # diagnostic info 
