@@ -21,37 +21,17 @@ Each module is responsible for a clearly defined part of the pipeline and commun
 
 ```text
 project/
-│
+
 ├── main.py                     # entry point
-│
 ├── models/                     # shared data structures
 │   └── models.py
-│
 ├── simulation/                 # simulation & environment
-│   ├── interface.py
-│   ├── simulation.py
-│   └── collision.py
-│
 ├── motion/                     # vehicle models
-│   ├── kinematic.py
-│   └── dynamic.py
-│
 ├── prediction/                 # object prediction
-│   └── predictor.py
-│
 ├── planner/                    # hybrid A* implementation
-│   ├── planner.py
-│   ├── node.py
-│   └── cost.py
-│
 ├── control/                    # tracking / MPC
-│   └── controller.py
-│
 ├── visualization/              # visualization tools
-│   └── viz.py
-│
 └── utils/                      # helper functions (math, time, etc.)
-    └── utils.py
 ```
 
 ---
