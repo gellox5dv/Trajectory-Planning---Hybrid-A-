@@ -21,7 +21,7 @@ Each module is responsible for a clearly defined part of the pipeline and commun
 
 ```text
 project/
-
+│
 ├── main.py                     # entry point
 ├── models/                     # shared data structures
 │   └── models.py
