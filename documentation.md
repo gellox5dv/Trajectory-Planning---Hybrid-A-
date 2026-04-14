@@ -106,7 +106,7 @@ class SimulationInterface:
         pass
 
     def step(self, dt: int) -> None:
-        """Advances the simulation by one time step."""
+        """Advances the simulation by dt [ms]."""
         pass
 ```
 
