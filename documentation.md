@@ -358,7 +358,7 @@ def visualize_scene(
     - env: current environment
     - ego: current ego state
     - vehicle_params: vehicle geometry for rendering
-    - trajectory: optional planned trajectory
+    - trajectory: planned trajectory
     """
 ````
 
