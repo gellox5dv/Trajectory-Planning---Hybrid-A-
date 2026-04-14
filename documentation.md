@@ -456,12 +456,8 @@ SIMULATION
                   ↓
         VISUALIZATION
             |
-            |-- visualize_environment(env)
-            |-- visualize_predicted_environment(pred_env)
-            |-- visualize_trajectory(traj)
-            |-- visualize_ego(state)
-            |
-            → displays full system state (current + future + plan)
+            |-- visualize_scene(...)
+            
 ```
 ---
 
