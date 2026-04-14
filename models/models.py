@@ -132,18 +132,35 @@ class Lane:
 
 
 # ============================================================
-# Environment (Prediction Output)
+# Environment (Current State from Simulation / Perception)
 # ============================================================
 
 @dataclass
 class Environment:
-    objects: Dict[int, List[DynamicObjectStamped]]
+    objects: List[DynamicObject]
+    # list of current object states (no prediction)
+
+    lanes: List[Lane]
+    # static road geometry
+
+
+# ============================================================
+# Environment (Prediction Output)
+# ============================================================
+
+@dataclass
+class PredictedEnvironment:
+    objects: Dict[int, List[DynamicObjectStamped]] 
     # mapping: object_id → predicted states over time
 
-    lanes: List[Lane]           # static road geometry
+    lanes: List[Lane]
+    # static road geometry
 
-    dt: int                     # time resolution of prediction [ms]
-    horizon: int                # prediction horizon [ms]
+    dt: int
+    # time resolution of prediction [ms]
+
+    horizon: int
+    # prediction horizon [ms]
 
 
 # ============================================================
