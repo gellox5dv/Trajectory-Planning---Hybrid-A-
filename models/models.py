@@ -192,7 +192,7 @@ class PlanningRequest:
     goal_region: GoalRegion     # target region
 
     vehicle_params: VehicleParameters
-    environment: Environment
+    environment: PredictedEnvironment
 
     horizon: int                # planning horizon [ms]
 
