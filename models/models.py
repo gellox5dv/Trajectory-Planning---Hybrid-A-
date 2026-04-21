@@ -137,7 +137,7 @@ class Lane:
 
 @dataclass
 class Environment:
-    objects: List[DynamicObject]
+    objects: List[DynamicObjectStamped]
     # list of current object states (no prediction)
 
     lanes: List[Lane]
@@ -187,7 +187,7 @@ class GoalRegion:
 
 @dataclass
 class PlanningRequest:
-    start_state: EgoState       # initial state for planning 
+    start_state: EgoStateStamped   # initial state for planning 
 
     goal_region: GoalRegion     # target region
 
