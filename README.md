@@ -73,7 +73,7 @@ Defines how other modules interact with the simulation.
 ```python
 class SimulationInterface:
 
-    def get_ego_state(self) -> EgoState:
+    def get_ego_state(self) -> EgoStateStamped:
         """Returns the current ego vehicle state."""
         pass
 
@@ -105,10 +105,10 @@ def check_collision(
 
 ```python
 def is_collision_free(
-    state: EgoState,
+    state: EgoStateStamped,
     env: PredictedEnvironment
 ) -> bool:
-    """Checks whether a state is collision-free within the predicted environment."""
+    """Checks whether a state is collision-free within the predicted environment at a given time (defined in the timestamp in EgoStateStamped)."""
     pass
 ```
 
@@ -132,11 +132,11 @@ Used inside the planner for fast state expansion.
 
 ```python
 def nonlinear_bicycle_model(
-    state: EgoState,
+    state: EgoStateStamped,
     control: EgoInput,
     params: VehicleParameters,
     dt: int
-) -> EgoState:
+) -> EgoStateStamped:
     """
     Computes the next state using a nonlinear kinematic bicycle model.
 
@@ -205,7 +205,7 @@ Predicts future motion of surrounding objects.
 
 ```python
 def predict_constant_velocity(
-    obj: DynamicObject,
+    obj: DynamicObjectStamped,
     horizon: int,
     dt: int
 ) -> list[DynamicObjectStamped]:
@@ -215,7 +215,7 @@ def predict_constant_velocity(
 
 ```python
 def predict_constant_acceleration(
-    obj: DynamicObject,
+    obj: DynamicObjectStamped,
     horizon: int,
     dt: int
 ) -> list[DynamicObjectStamped]:
@@ -225,8 +225,7 @@ def predict_constant_acceleration(
 
 ```python
 def predict_environment(
-    objects: list[DynamicObject],
-    lanes: list[Lane],
+    environment: Environment,
     horizon: int,
     dt: int
 ) -> PredictedEnvironment:
