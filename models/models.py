@@ -121,6 +121,8 @@ class Lane:
     id: int                     # unique lane identifier
 
     centerline: List[Vector2D]  # ordered centerline points [m]
+                                # The direction of the lane is implicitly defined by the order of the points.
+
 
     width: float                # total lane width [m] (± width/2 from centerline)
 
