@@ -9,14 +9,14 @@ VEHICLE_DIMS = SimpleNamespace(width = 2.0, length = 5.0)
 
 lane1 = Lane(
     id = 1,
-    centerline = [Vector2D(x = float(i), y = 2.0) for i in range(int(LANE_DIMS.length))],
+    centerline = [(Vector2D(x = float(i), y = 2.0), 0.0) for i in range(int(LANE_DIMS.length))],
     width = LANE_DIMS.width,
     speed_limit = 16.0 + 2/3    # 60 km/h
 )
 
 lane2 = Lane(
     id = 2,
-    centerline = [Vector2D(x = float(i), y = 6.0) for i in range(int(LANE_DIMS.length) - 1, -1, -1)],
+    centerline = [(Vector2D(x = float(i), y = 6.0), pi) for i in range(int(LANE_DIMS.length) - 1, -1, -1)],
     width = LANE_DIMS.width,
     speed_limit = 16.0 + 2/3    # 60 km/h
 )

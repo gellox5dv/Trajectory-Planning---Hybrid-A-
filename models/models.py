@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Tuple, Dict, Optional
 from enum import Enum
 
 
@@ -120,7 +120,7 @@ class DynamicState:
 class Lane:
     id: int                     # unique lane identifier
 
-    centerline: List[Vector2D]  # ordered centerline points [m]
+    centerline: List[Tuple[Vector2D, float]]  # ordered centerline points with tangents [[m, m], rad]
 
     width: float                # total lane width [m] (± width/2 from centerline)
 
