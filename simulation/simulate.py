@@ -1,5 +1,7 @@
 from .environment import environment
 from math import cos, sin
+from typing import Tuple
+from .helper import get_bbox_corners, check_line_intersection
 from models.models import (
     EgoStateStamped, EgoState, EgoInput, Environment, Vector2D, DynamicObjectStamped, 
     DynamicObject, VehicleParameters, PredictedEnvironment, Lane
@@ -20,77 +22,33 @@ class Simulation:
     curr_env = environment
 
 
-    def _get_bbox_corners(self, x: float, y: float, yaw: float, length: float, width: float):
-        """Compute the corners of a bounding box given its center position, orientation, length, and width."""
-
-        return [
-            Vector2D(
-                x = x + (length / 2) * cos(yaw) - (width / 2) * sin(yaw),
-                y = y + (length / 2) * sin(yaw) + (width / 2) * cos(yaw)
-            ),
-            Vector2D(
-                x = x + (length / 2) * cos(yaw) + (width / 2) * sin(yaw),
-                y = y + (length / 2) * sin(yaw) - (width / 2) * cos(yaw)
-            ),
-            Vector2D(
-                x = x - (length / 2) * cos(yaw) + (width / 2) * sin(yaw),
-                y = y - (length / 2) * sin(yaw) - (width / 2) * cos(yaw)
-            ),
-            Vector2D(
-                x = x - (length / 2) * cos(yaw) - (width / 2) * sin(yaw),
-                y = y - (length / 2) * sin(yaw) + (width / 2) * cos(yaw)
-            )
-        ]
-
-
-    def _check_line_intersection(self, p1: Vector2D, p2: Vector2D, p3: Vector2D, p4: Vector2D):
-        """Check if the line segments p1p2 and p3p4 intersect."""
-
-        # direction vectors
-        d1 = Vector2D(x = p2.x - p1.x, y = p2.y - p1.y)
-        d2 = Vector2D(x = p4.x - p3.x, y = p4.y - p3.y)
-
-        # determinant of the direction vectors
-        det = d1.x * d2.y - d1.y * d2.x
-
-        # no intersection
-        if det == 0:
-            return False
-
-        # parameters of the intersection point
-        t = ((p3.x - p1.x) * d2.y - (p3.y - p1.y) * d2.x) / det
-        u = ((p3.x - p1.x) * d1.y - (p3.y - p1.y) * d1.x) / det
-
-        return (0 <= t <= 1) and (0 <= u <= 1)
+    def _get_x_y_yaw_from_state(self, state: EgoStateStamped | DynamicObjectStamped) -> Tuple[float, float, float]:
+        return state.state.pos.x, state.state.pos.y, state.state.yaw
 
 
     def _check_collision_object(
         self,
         ego_state: EgoStateStamped,
         obj: DynamicObjectStamped
-    ):
+    ) -> bool:
         """Check if the ego vehicle collides with the given dynamic object."""
 
         ego_width = VehicleParameters.WIDTH
         ego_length = VehicleParameters.LENGTH
-        ego_x = ego_state.state.pos.x
-        ego_y = ego_state.state.pos.y
-        ego_yaw = ego_state.state.yaw
+        ego_x, ego_y, ego_yaw = self._get_x_y_yaw_from_state(ego_state)
 
-        ego_corners = self._get_bbox_corners(ego_x, ego_y, ego_yaw, ego_length, ego_width)
+        ego_corners = get_bbox_corners(ego_x, ego_y, ego_yaw, ego_length, ego_width)
 
         obj_width = obj.state.width
         obj_length = obj.state.length
-        obj_x = obj.state.pos.x
-        obj_y = obj.state.pos.y
-        obj_yaw = obj.state.yaw
+        obj_x, obj_y, obj_yaw = self._get_x_y_yaw_from_state(obj)
 
-        obj_corners = self._get_bbox_corners(obj_x, obj_y, obj_yaw, obj_length, obj_width)
+        obj_corners = get_bbox_corners(obj_x, obj_y, obj_yaw, obj_length, obj_width)
 
         # check if any boundary of the ego bounding box intersects with any boundary of the object bounding box
         for i in range(4):
             for j in range(4):
-                if self._check_line_intersection(
+                if check_line_intersection(
                     ego_corners[i],
                     ego_corners[(i + 1) % 4],
                     obj_corners[j],
@@ -99,19 +57,55 @@ class Simulation:
                     return True
         return False
 
-    #TODO: implement lane collision checking
+
     def _check_collision_lane(
         self,
         ego_state: EgoStateStamped,
         lane: Lane
-    ): 
-        ...
+    ) -> bool:
+        """Check if the ego vehicle collides with the lane boundaries."""
+
+        ego_width = VehicleParameters.WIDTH
+        ego_length = VehicleParameters.LENGTH
+        ego_x, ego_y, ego_yaw = self._get_x_y_yaw_from_state(ego_state)
+
+        ego_corners = get_bbox_corners(ego_x, ego_y, ego_yaw, ego_length, ego_width)
+
+        f1 = False  # flag to indicate if atleast one centerline point is within 10 m of ego position
+
+        for i in range(len(lane.centerline) - 1):
+            p1, _ = lane.centerline[i]
+            p2, _ = lane.centerline[i + 1]
+
+            if (ego_x - p1.x) ** 2 + (ego_y - p1.y) ** 2 > 100.0:   # 10 m radius
+                continue
+
+            f1 = True
+
+            lane_vec = Vector2D(x = p2.x - p1.x, y = p2.y - p1.y)
+            lane_len = (lane_vec.x ** 2 + lane_vec.y ** 2) ** 0.5
+            lane_unit = Vector2D(x = lane_vec.x / lane_len, y = lane_vec.y / lane_len)
+            
+            if lane_len == 0.0:
+                continue
+            
+            for j in range(4):
+                corner_vec = Vector2D(x = ego_corners[j].x - p1.x, y = ego_corners[j].y - p1.y)
+                cross_prod = lane_unit.x * corner_vec.y - lane_unit.y * corner_vec.x    # perpendicular distance from centerpoint to ego corner
+                if cross_prod > lane.width / 2 or cross_prod < -lane.width / 2:
+                    return True
+
+        if not f1:
+            return True # offroad
+
+        return False
+
 
     def _is_collision_free(
         self,
         ego_state: EgoStateStamped,
         env: PredictedEnvironment
-    ):
+    ) -> bool:
         """Check if the ego state is collision-free with objects and lanes."""
 
         for obj in env.dynamic_objects:
