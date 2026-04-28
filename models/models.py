@@ -19,15 +19,24 @@ class Vector2D:
 
 @dataclass
 class VehicleParameters:
-    max_steer: float            # maximum steering angle [rad]
-    max_steer_rate: float       # maximum steering rate [rad/s]
+    max_steer: float            # maximum steering angle wheels [rad]
+    max_steer_rate: float       # maximum steering rate wheels [rad/s]
 
     L: float                    # wheelbase [m]
     Lf: float                   # CoG to front axle [m]
     Lr: float                   # CoG to rear axle [m]
+    Iz: float                   #Moment of inertia [kg.m2]
+
 
     width: float                # vehicle width [m]
     length: float               # vehicle length [m]
+    rear_to_wheel: float        #Distance rear to axel [m]
+    track: float                 #Vehile track [m]
+    wheel_base: float            #Wheel base [m]
+
+    wheel_length: float          #Wheel length [m]
+    wheel_width: float           #Wheel width [m]
+
 
     m: float                    # mass [kg]
     Iz: float                   # yaw inertia [kg·m²]

@@ -26,6 +26,8 @@ project/
 ├── models/                     # shared data structures
 │   └── models.py
 ├── simulation/                 # simulation & environment
+│   ├── simulation.py
+│   └── environment.py
 ├── motion/                     # vehicle models
 ├── prediction/                 # object prediction
 ├── planner/                    # hybrid A* implementation
