@@ -19,18 +19,24 @@ class Vector2D:
 
 @dataclass
 class VehicleParameters:
-    max_steer: float            # maximum steering angle [rad]
-    max_steer_rate: float       # maximum steering rate [rad/s]
+    max_steer: float            # maximum steering angle wheels [rad]
+    max_steer_rate: float       # maximum steering rate wheels [rad/s]
 
-    L: float                    # wheelbase [m]
     Lf: float                   # CoG to front axle [m]
     Lr: float                   # CoG to rear axle [m]
+    Iz: float                   #Moment of inertia [kg.m2]
+
+    wheel_length: float          #Wheel length [m]
+    wheel_width: float           #Wheel width [m]
+    
+    wheel_base: float            #Wheel base [m]
+    track: float                 #Vehile track [m]
 
     width: float                # vehicle width [m]
     length: float               # vehicle length [m]
+    rear_to_wheel: float        #Distance rear to axel [m]
 
     m: float                    # mass [kg]
-    Iz: float                   # yaw inertia [kg·m²]
 
     Cf: float                   # front cornering stiffness [N/rad]
     Cr: float                   # rear cornering stiffness [N/rad]
@@ -137,7 +143,7 @@ class Lane:
 
 @dataclass
 class Environment:
-    objects: List[DynamicObject]
+    objects: List[DynamicObjectStamped]
     # list of current object states (no prediction)
 
     lanes: List[Lane]
@@ -187,7 +193,7 @@ class GoalRegion:
 
 @dataclass
 class PlanningRequest:
-    start_state: EgoState       # initial state for planning 
+    start_state: EgoStateStamped   # initial state for planning 
 
     goal_region: GoalRegion     # target region
 
