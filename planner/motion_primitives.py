@@ -253,55 +253,160 @@ def get_motion_primitives(velocity: float,
                           deceleration_limit: float,
                           positiv_jerk_limit: float,
                           negativ_jerk_limit: float,
-                          internal_dt: int) ->list[MotionPrimitive]:
+                          internal_dt: int) -> list[MotionPrimitive]:
+    """
+    Generates a deterministic set of feasible motion primitives (action trajectories) 
+    for a Hybrid A* planner based on vehicle dynamics and kinematic limits.
+
+    Parameters
+    ----------
+    velocity : float
+        Current vehicle speed in m/s.
+    steering_angle : float
+        Current steering angle in radians.
+    vehicle_params : VehicleParameters
+        Data class containing physical vehicle dimensions and constraints.
+    acceleration_split : list[float]
+        List of percentages (e.g., [0, 50, 100]) to sample the feasible acceleration range. 
+        0% represents max deceleration, 100% represents max acceleration.
+    steering_angle_split : list[float]
+        List of percentages (e.g., [-100, 0, 100]) to sample the feasible steering range.
+        -100% represents max right/left, 0% is straight, 100% represents max left/right.
+    max_a_lat : float
+        Maximum allowable lateral acceleration in m/s².
+    velocity_limit : float
+        The target maximum speed limit in m/s.
+    velocity_limit_tolerance : float
+        Upper tolerance above the velocity limit. Exceeding this triggers braking.
+    velocity_limit_thresh : float
+        Threshold defining the docking zone to smoothly transition into deadbeat control.
+    acceleration : float
+        Current vehicle acceleration in m/s².
+    acceleration_limit : float
+        Absolute physical maximum acceleration bound (> 0) in m/s².
+    deceleration_limit : float
+        Absolute physical maximum deceleration bound (< 0) in m/s².
+    positiv_jerk_limit : float
+        Maximum allowed rate of increasing acceleration (> 0) in m/s³.
+    negativ_jerk_limit : float
+        Maximum allowed rate of decreasing acceleration (< 0) in m/s³.
+    internal_dt : int
+        Time step duration for the primitive in milliseconds (ms).
+
+    Returns
+    -------
+    list[MotionPrimitive]
+        A list of physically feasible and safe motion primitives for the next expansion step.
+    """
     
-    motion_primitives:list[MotionPrimitive] = []
+    # 1. Initialize the empty list for the generated motion primitives
+    motion_primitives: list[MotionPrimitive] = []
     
-    acceleration_min, acceleration_max = get_acceleration_range(velocity = velocity,
-                                                                velocity_limit = velocity_limit,
-                                                                velocity_limit_tolerance = velocity_limit_tolerance,
-                                                                velocity_limit_thresh = velocity_limit_thresh,
-                                                                acceleration = acceleration,
-                                                                acceleration_limit = acceleration_limit,
-                                                                deceleration_limit = deceleration_limit,
-                                                                positiv_jerk_limit = positiv_jerk_limit,
-                                                                negativ_jerk_limit = negativ_jerk_limit,
-                                                                internal_dt = internal_dt)
+    # 2. Get the dynamically feasible minimum and maximum acceleration bounds
+    acceleration_min, acceleration_max = get_acceleration_range(
+        velocity = velocity,
+        velocity_limit = velocity_limit,
+        velocity_limit_tolerance = velocity_limit_tolerance,
+        velocity_limit_thresh = velocity_limit_thresh,
+        acceleration = acceleration,
+        acceleration_limit = acceleration_limit,
+        deceleration_limit = deceleration_limit,
+        positiv_jerk_limit = positiv_jerk_limit,
+        negativ_jerk_limit = negativ_jerk_limit,
+        internal_dt = internal_dt
+    )
     
-    internal_dt_sec = internal_dt/1000.0
+    # Time conversion for kinematic projection calculations
+    internal_dt_sec = internal_dt / 1000.0
+    
+    # Compute the total available acceleration span
     acceleration_delta = acceleration_max - acceleration_min
-    acceleration_values:list[float] = []
+    acceleration_values: list[float] = []
 
-   
+    # 3. Generate the discrete acceleration samples based on the provided percentages
     for split in acceleration_split:
-        acceleration_delta_split = acceleration_delta * (split/100)
+        # Convert the percentage split (0-100) into an actual acceleration offset
+        acceleration_delta_split = acceleration_delta * (split / 100.0)
         acceleration_value = acceleration_min + acceleration_delta_split
-        acceleration_values.append(acceleration_value)
-
-
-    for acceleration_value in acceleration_values:
-        target_velocity = max(0.0, velocity + (acceleration_value * internal_dt_sec))
-        min_angle, max_angle = get_steering_angle_range(velocity = target_velocity,
-                                                        steering_angle = steering_angle,
-                                                        vehicle_params = vehicle_params,
-                                                        max_a_lat = max_a_lat,
-                                                        internal_dt= internal_dt)
         
-        center_point = (max_angle+min_angle)/2
-        distance_from_center = abs(max_angle-center_point)
+        # Append uniquely to maintain deterministic ordering without duplicates
+        if acceleration_value not in acceleration_values:
+            acceleration_values.append(acceleration_value)
 
+    # 4. Generate steering samples for each valid acceleration sample
+    for acceleration_value in acceleration_values:
+        
+        # Predict the resulting velocity at the end of this primitive's time step.
+        # Bounded to >= 0.0 to prevent evaluating backward motion physics.
+        target_velocity = max(0.0, velocity + (acceleration_value * internal_dt_sec))
+        
+        # Retrieve the dynamically feasible steering bounds for the predicted target velocity
+        min_angle, max_angle = get_steering_angle_range(
+            velocity = target_velocity,
+            steering_angle = steering_angle,
+            vehicle_params = vehicle_params,
+            max_a_lat = max_a_lat,
+            internal_dt = internal_dt
+        )
+        
+        # Calculate the geometric center and radius of the available steering envelope
+        center_point = (max_angle + min_angle) / 2.0
+        distance_from_center = abs(max_angle - center_point)
+
+        # Generate discrete steering commands based on the provided percentages
         for split in steering_angle_split:
-            steering_angle_delta_split = distance_from_center * (split/100)
-            steering_angle_value = center_point+steering_angle_delta_split
-            motion_primitive = MotionPrimitive(steering_angle_value,
-                                               acceleration_value,
-                                               internal_dt)
+            # Convert the percentage split (-100 to 100) into a steering offset
+            steering_angle_delta_split = distance_from_center * (split / 100.0)
+            steering_angle_value = center_point + steering_angle_delta_split
+            
+            # Instantiate the primitive and add it to the expansion list
+            motion_primitive = MotionPrimitive(
+                steering_angle = steering_angle_value,
+                acceleration = acceleration_value,
+                dt = internal_dt
+            )
             motion_primitives.append(motion_primitive)
+
+    # Sort primitives to optimize A* expansion (straight and constant speed first):
+    # 1. Absolute steering magnitude (closest to 0 straight ahead first).
+    # 2. Steering sign preference (positive steering angles before negative ones).
+    # 3. Absolute acceleration magnitude (closest to 0 m/s² / constant speed first).
+    # 4. Acceleration sign preference (positive acceleration before braking).
+    motion_primitives.sort(key=lambda mp: (
+        round(abs(mp.steering_angle), 5), 
+        -mp.steering_angle, 
+        round(abs(mp.acceleration), 5),
+        -mp.acceleration
+    ))
     
     return motion_primitives
 
 
+
+def print_motion_primitives(primitives: list[MotionPrimitive]) -> None:
+    """
+    Prints a list of MotionPrimitives as a clearly formatted table in the console.
+    """
+    if not primitives:
+        print("The list of Motion Primitives is empty.")
+        return
+
+    # 1. Define the table header (with fixed column widths)
+    header = f"{'No.':<5} | {'Steering Angle [rad]':<22} | {'Acceleration [m/s²]':<22} | {'dt [ms]':<10}"
+    print("\n" + header)
     
+    # 2. Dynamically adjust the separator line to match the header length
+    print("-" * len(header))
+
+    # 3. Iterate through all primitives and print them with formatting
+    for i, mp in enumerate(primitives, start=1):
+        steer_str = f"{mp.steering_angle:.5f}"
+        accel_str = f"{mp.acceleration:.2f}"
+        
+        print(f"{i:<5} | {steer_str:<22} | {accel_str:<22} | {mp.dt:<10}")
+    
+    print(f"{'-' * len(header)}")
+    print(f"Total: {len(primitives)} Motion Primitives\n")  
     
     
 
@@ -395,7 +500,8 @@ def main():
                                 positiv_jerk_limit=1,
                                 negativ_jerk_limit=-1,
                                 internal_dt=100)
-    print(res)
+    
+    print_motion_primitives(res)
 
 
     t  = timeit.timeit(lambda: get_motion_primitives(velocity=5,
