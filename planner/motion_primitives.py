@@ -2,6 +2,14 @@ from models.models import *
 import numpy as np
 import math
 import timeit
+from dataclasses import dataclass
+
+
+@dataclass
+class MotionPrimitive:
+    steering_angle: float       # steering input δ [rad]
+    acceleration: float         # longitudinal acceleration [m/s²]  
+    dt:int                      # the time the MotionPrimitive is used
 
 
 def get_max_steering_angle(velocity: float, max_a_lat: float, params: VehicleParameters) -> float:
@@ -40,7 +48,7 @@ def get_max_steering_angle(velocity: float, max_a_lat: float, params: VehiclePar
         return params.max_steer
     
     # Compute steering angle using the rearranged bicycle model formula
-    res =  np.arctan((max_a_lat*params.L)/np.square(velocity))
+    res =  np.arctan((max_a_lat*params.wheel_base)/np.square(velocity))
     return min(res, params.max_steer)
 
 
@@ -228,6 +236,72 @@ def get_acceleration_range(velocity: float,
         a_decel_max = a_accel_max
         
     return float(a_decel_max), float(a_accel_max)
+
+
+
+def get_motion_primitives(velocity: float,
+                          steering_angle: float,
+                          vehicle_params: VehicleParameters,
+                          acceleration_split: list[float],
+                          steering_angle_split: list[float],
+                          max_a_lat: float,
+                          velocity_limit: float,
+                          velocity_limit_tolerance: float,
+                          velocity_limit_thresh: float,
+                          acceleration: float,
+                          acceleration_limit: float,
+                          deceleration_limit: float,
+                          positiv_jerk_limit: float,
+                          negativ_jerk_limit: float,
+                          internal_dt: int) ->list[MotionPrimitive]:
+    
+    motion_primitives:list[MotionPrimitive] = []
+    
+    acceleration_min, acceleration_max = get_acceleration_range(velocity = velocity,
+                                                                velocity_limit = velocity_limit,
+                                                                velocity_limit_tolerance = velocity_limit_tolerance,
+                                                                velocity_limit_thresh = velocity_limit_thresh,
+                                                                acceleration = acceleration,
+                                                                acceleration_limit = acceleration_limit,
+                                                                deceleration_limit = deceleration_limit,
+                                                                positiv_jerk_limit = positiv_jerk_limit,
+                                                                negativ_jerk_limit = negativ_jerk_limit,
+                                                                internal_dt = internal_dt)
+    
+    internal_dt_sec = internal_dt/1000.0
+    acceleration_delta = acceleration_max - acceleration_min
+    acceleration_values:list[float] = []
+
+   
+    for split in acceleration_split:
+        acceleration_delta_split = acceleration_delta * (split/100)
+        acceleration_value = acceleration_min + acceleration_delta_split
+        acceleration_values.append(acceleration_value)
+
+
+    for acceleration_value in acceleration_values:
+        target_velocity = max(0.0, velocity + (acceleration_value * internal_dt_sec))
+        min_angle, max_angle = get_steering_angle_range(velocity = target_velocity,
+                                                        steering_angle = steering_angle,
+                                                        vehicle_params = vehicle_params,
+                                                        max_a_lat = max_a_lat,
+                                                        internal_dt= internal_dt)
+        
+        center_point = (max_angle+min_angle)/2
+        distance_from_center = abs(max_angle-center_point)
+
+        for split in steering_angle_split:
+            steering_angle_delta_split = distance_from_center * (split/100)
+            steering_angle_value = center_point+steering_angle_delta_split
+            motion_primitive = MotionPrimitive(steering_angle_value,
+                                               acceleration_value,
+                                               internal_dt)
+            motion_primitives.append(motion_primitive)
+    
+    return motion_primitives
+
+
+    
     
     
 
@@ -236,40 +310,115 @@ def get_acceleration_range(velocity: float,
 
 def main():
     vehicle  = VehicleParameters(
-            max_steer=0.7,
-            max_steer_rate=0.7,
+            max_steer=0.7,            # maximum steering angle wheels [rad]
+            max_steer_rate=0.7  ,     # maximum steering rate wheels [rad/s]
 
-            L=1.69,
-            Lf=0.8,
-            Lr=0.89,
+            Lf=0.9442,                  # CoG to front axle [m]
+            Lr=0.7417,                    # CoG to rear axle [m]
+            Iz=430.166,                    #Moment of inertia [kg.m2]
 
-            width=1.24,
-            length=2.34,
+            wheel_length= 0.531,          #Wheel length [m]
+            wheel_width = 0.125,            #Wheel width [m]
 
-            m=474,
-            Iz=600,
+            wheel_base= 1.686,            #Wheel base [m]
+            track= 1.094,                #Vehile track [m]
 
-            Cf=35000,
-            Cr=35000,
+            width= 1.381,                 # vehicle width [m]
+            length = 2.338,               # vehicle length [m]
+            rear_to_wheel = 0.339,        #Distance rear to axel [m]
 
-            max_acceleration=2.0,
-            max_deceleration=6.0,
+            m= 633,                   # mass [kg]
 
-            mu=0.85
+            Cf= 2*32857.5,                    # front cornering stiffness [N/rad]
+            Cr= 2*32857.5,                   # rear cornering stiffness [N/rad]
+
+            max_acceleration= 2.0,     # max longitudinal acceleration [m/s²]
+            max_deceleration = -2.0,     # max braking deceleration [m/s²]
+
+            mu = 2.0                   # tire-road friction coefficient [-]
         )
     
     
     
-    res = get_steering_angle_range(velocity=4, steering_angle=0.2, vehicle_params=vehicle, max_a_lat=3, internal_dt=100)
-    print(res)
+    #res = get_steering_angle_range(velocity=4, steering_angle=0.2, vehicle_params=vehicle, max_a_lat=3, internal_dt=100)
+    #print(res)
+#
+#
+    #res = get_max_steering_angle(velocity=4, max_a_lat=3, params=vehicle)
+    #print(res)
+#
+    ## Benchmarking
+    #t  = timeit.timeit(lambda: get_steering_angle_range(velocity=100, steering_angle=0.7, vehicle_params=vehicle, max_a_lat=3, internal_dt=100), number=10000)
+    #print(f"Average time: {(t/10000)*1000:.6f} ms")
 
 
-    res = get_max_steering_angle(velocity=4, max_a_lat=3, params=vehicle)
-    print(res)
 
-    # Benchmarking
-    t  = timeit.timeit(lambda: get_steering_angle_range(velocity=100, steering_angle=0.7, vehicle_params=vehicle, max_a_lat=3, internal_dt=100), number=10000)
+    ## Benchmarking
+    t  = timeit.timeit(lambda: get_acceleration_range(velocity = 5,
+                           velocity_limit = 13.88,
+                           velocity_limit_tolerance = 0.55,
+                           velocity_limit_thresh = 0.55,
+                           acceleration = 1.8,
+                           acceleration_limit = 2,
+                           deceleration_limit = -2,
+                           positiv_jerk_limit = 1,
+                           negativ_jerk_limit = -2,
+                           internal_dt = 100),
+                           number=100)
     print(f"Average time: {(t/10000)*1000:.6f} ms")
+    
+
+    #res = get_acceleration_range(velocity = 10,
+    #                       velocity_limit = 13.88,
+    #                       velocity_limit_tolerance = 0.55,
+    #                       velocity_limit_thresh = 0.55,
+    #                       acceleration = -1,
+    #                       acceleration_limit = 2,
+    #                       deceleration_limit = -2,
+    #                       positiv_jerk_limit = 1,
+    #                       negativ_jerk_limit = -2,
+    #                       internal_dt = 100)
+    #print(res)
+
+    res = get_motion_primitives(velocity=5,
+                                steering_angle=0,
+                                vehicle_params=vehicle,
+                                acceleration_split=[0,25,50,75,100],
+                                steering_angle_split=[-100,-50,-25,0,25,50,100],
+                                max_a_lat=3,
+                                velocity_limit=13.88,
+                                velocity_limit_tolerance=0.55,
+                                velocity_limit_thresh=0.55,
+                                acceleration=0,
+                                acceleration_limit=2,
+                                deceleration_limit=-2,
+                                positiv_jerk_limit=1,
+                                negativ_jerk_limit=-1,
+                                internal_dt=100)
+    print(res)
+
+
+    t  = timeit.timeit(lambda: get_motion_primitives(velocity=5,
+                                                    steering_angle=0,
+                                                    vehicle_params=vehicle,
+                                                    acceleration_split={0,25,50,75,100},
+                                                    steering_angle_split={-100,-50,-25,0,25,50,100},
+                                                    max_a_lat=3,
+                                                    velocity_limit=13.88,
+                                                    velocity_limit_tolerance=0.55,
+                                                    velocity_limit_thresh=0.55,
+                                                    acceleration=0,
+                                                    acceleration_limit=2,
+                                                    deceleration_limit=-2,
+                                                    positiv_jerk_limit=1,
+                                                    negativ_jerk_limit=-1,
+                                                    internal_dt=100),
+                                                    number = 1000)
+    
+    print(f"Average time: {(t/1000)*1000:.6f} ms")
+
+                                                                            
+
 
 
 if __name__ == "__main__":
