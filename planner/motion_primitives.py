@@ -100,73 +100,6 @@ def get_steering_angle_range(velocity: float,
 
 def get_acceleration_range(velocity: float,
                            velocity_limit: float,
-                           velocity_limit_tolerance:float,
-                           velocity_limit_thresh:float,
-                           acceleration: float,
-                           acceleration_limit: float,
-                           deceleration_limit: float,
-                           positiv_jerk_limit: float,
-                           negativ_jerk_limit: float,
-                           internal_dt: int) -> tuple[float, float]:
-    
-
-    #a_to_v_limit = (velocity_limit - velocity)/internal_dt
-    #a_to_v_0     = (0 - velocity)/internal_dt
-
-    if(v < v + velocity_limit_tolerance and v > v - velocity_limit_thresh):
-        a_accel_max = 0
-
-
-
-    elif v < velocity_limit + velocity_limit_tolerance:
-        a = acceleration
-        for i in range(math.ceil(acceleration/(negativ_jerk_limit*internal_dt))):
-                a = a + (negativ_jerk_limit * internal_dt)
-                if a < 0: a = 0
-                v = v + a
-        if(v>velocity_limit-velocity_limit_thresh):
-            a_accel_max = acceleration + (negativ_jerk_limit * internal_dt) 
-        else:
-            a_accel_max = min(acceleration + positiv_jerk_limit * internal_dt, acceleration_limit)
-
-    else:
-        a = acceleration
-        #
-
-    a = acceleration
-    for i in range(math.ceil(acceleration/(positiv_jerk_limit*internal_dt))):
-            a = a + (positiv_jerk_limit * internal_dt)
-            if a > 0: a = 0
-            v = v + a
-    if(v<0+velocity_limit_thresh):
-        a_decel_max = acceleration + (positiv_jerk_limit * internal_dt) 
-    else:
-        a_decel_max = max(acceleration + negativ_jerk_limit * internal_dt, deceleration_limit)
-    
-
-
-    #bereich definieren (eigentlich tolercane) in dem wir eine beschleunigung von 0 tollerieren
-    # v  betrachten v aktuell ist größer als v max
-
-#zurcürechen von v_max
-
-#hochrechen von v 0
-#am besten v_max-delta
-    
-
-        a_decay 
-
-
-    #velocity_limit_tolerance betrachten!
-
-    #Minimale Geschwindigkeit von 0 betrachten inklusive tolleranz!
-    # Wichtig: Es muss vereinfacht auf die velocity_limit(das ist ja i.d.R. die Zielgeschwindigkeit) geregelt werden!
-    # Frage wie macht man die Verteilung der Regelung (der Tracker nimmt ja die Waypoints und Regelt auch auf die Zielgeschwindigkeit)
-
-
-
-def get_acceleration_range(velocity: float,
-                           velocity_limit: float,
                            velocity_limit_tolerance: float,
                            velocity_limit_thresh: float,
                            acceleration: float,
@@ -174,91 +107,123 @@ def get_acceleration_range(velocity: float,
                            deceleration_limit: float,
                            positiv_jerk_limit: float,
                            negativ_jerk_limit: float,
-                           internal_dt: float) -> tuple[float, float]:
+                           internal_dt: int) -> tuple[float, float]:
     """
     Calculates the permissible acceleration range [a_min, a_max] for the next time step.
-    Takes jerk limits, velocity limits, and tolerance bands into account.
+    Takes jerk limits, velocity limits, and tolerance bands into account for predictive 
+    and deadbeat control.
+
     
-    Assumptions: 
-    - positiv_jerk_limit > 0
-    - negativ_jerk_limit < 0
+    Parameters
+    ----------
+    velocity : float
+        Current vehicle speed in m/s.
+    velocity_limit : float
+        The target maximum speed limit in m/s.
+    velocity_limit_tolerance : float
+        Upper tolerance above the velocity limit. Exceeding this triggers maximum hard braking.
+    velocity_limit_thresh : float
+        Threshold defining the docking zone (below the limit and above 0) 
+        to smoothly transition into deadbeat control and prevent chattering.
+    acceleration : float
+        Current vehicle acceleration in m/s².
+    acceleration_limit : float
+        Absolute physical maximum acceleration bound (> 0) in m/s².
+    deceleration_limit : float
+        Absolute physical maximum deceleration bound (< 0) in m/s².
+    positiv_jerk_limit : float
+        Maximum allowed rate of increasing acceleration (> 0) in m/s³.
+    negativ_jerk_limit : float
+        Maximum allowed rate of decreasing acceleration (< 0) in m/s³.
+    internal_dt : int
+        Time step duration in seconds (ms).
+
+    Returns
+    -------
+    tuple[float, float]
+        Feasible (min_acceleration, max_acceleration) range in m/s² for the next time step.
     """
+    #Conversion from milliseconds to seconds
+    internal_dt_sec = internal_dt/1000.0
+
+    # Prevent Division by Zero if internal_dt is strictly 0 (failsafe)
+    if internal_dt_sec <= 0.0:
+        return 0.0, 0.0
 
     # --- 1. Physical limits for the current time step (Jerk limitation) ---
-    # What is mechanically possible right now?
-    abs_max_a = min(acceleration + (positiv_jerk_limit * internal_dt), acceleration_limit)
-    abs_min_a = max(acceleration + (negativ_jerk_limit * internal_dt), deceleration_limit)
+    # Determine the mechanically achievable acceleration boundaries for this specific time step.
+    abs_max_a = min(acceleration + (positiv_jerk_limit * internal_dt_sec), acceleration_limit)
+    abs_min_a = max(acceleration + (negativ_jerk_limit * internal_dt_sec), deceleration_limit)
 
     # --- 2. Calculate maximum permissible acceleration (a_accel_max) ---
     
-    # CASE A: Velocity exceeds the tolerance band
+    # CASE A: Velocity strictly exceeds the upper tolerance band.
     if velocity > (velocity_limit + velocity_limit_tolerance):
-        # Force maximum reduction in acceleration (initiate braking)
+        # Force maximum possible deceleration (initiate hard braking).
         a_accel_max = abs_min_a
         a_decel_max = abs_min_a
 
         return float(a_decel_max), float(a_accel_max)
 
-
-    # CASE B: Velocity is within the tolerance band [limit, limit + tolerance]
+    # CASE B: Velocity is in the upper docking zone or within the tolerance band.
     elif velocity >= (velocity_limit - velocity_limit_thresh):
-        # Control exactly to V_limit, bounded by maximum allowed deceleration
-        req_a_max = (velocity_limit-velocity)/internal_dt     
+        # Apply deadbeat control to hit V_limit exactly, strictly bounded by physical jerk limits.
+        req_a_max = (velocity_limit - velocity) / internal_dt_sec    
         a_accel_max = min(req_a_max, abs_max_a)
         a_accel_max = max(a_accel_max, abs_min_a)
         
-
-    # CASE C: Velocity is below the limit (Predictive control)
+    # CASE C: Velocity is safely below the limit (Predictive look-ahead).
     else:
-        # Simulate: If we start reducing acceleration to 0 now,
-        # what will our final velocity be?
+        # Simulate: If we start reducing acceleration to 0 right now,
+        # what will our resulting velocity be?
         predicted_v = velocity
         temp_a = acceleration
         
-        # Calculate steps required to bring current acceleration to 0
-        steps_to_zero = math.ceil(abs(temp_a / (negativ_jerk_limit * internal_dt)))
+        # Calculate the discrete steps required to bring current acceleration down to 0.
+        steps_to_zero = math.ceil(abs(temp_a / (negativ_jerk_limit * internal_dt_sec)))
         
         for _ in range(steps_to_zero):
-            # Gradually reduce acceleration towards 0
-            temp_a = max(0.0, temp_a + (negativ_jerk_limit * internal_dt))
-            predicted_v += temp_a * internal_dt
+            # Simulate gradually shedding acceleration towards 0.
+            temp_a = max(0.0, temp_a + (negativ_jerk_limit * internal_dt_sec))
+            predicted_v += temp_a * internal_dt_sec
 
-        # If the prediction shows we will exceed the threshold:
+        # If the predicted velocity enters the upper docking zone, enforce maximum deceleration limit.
         if predicted_v > (velocity_limit - velocity_limit_thresh):
             a_accel_max = abs_min_a
         else:
             a_accel_max = abs_max_a
 
     # --- 3. Calculate minimum permissible acceleration (a_decel_max) ---
-    # Goal: Prevent the vehicle from driving backward (v < 0)
+    # Goal: Prevent the vehicle from reversing (v < 0).
 
-    if velocity <= (velocity_limit_thresh):
-        # Control exactly to 0, bounded by maximum allowed deceleration
-        req_a_min = (0.0 - velocity) / internal_dt
+    # CASE D: Velocity is in the lower docking zone (approaching standstill).
+    if velocity <= velocity_limit_thresh:
+        # Apply deadbeat control to bring velocity exactly to 0, bounded by physical jerk limits.
+        req_a_min = (0.0 - velocity) / internal_dt_sec
         a_decel_max = min(req_a_min, abs_max_a)
         a_decel_max = max(a_decel_max, abs_min_a)
     
-
+    # CASE E: Velocity is safely above 0 (Predictive look-ahead for stopping).
     else:
         predicted_v_min = velocity
         temp_a_min = acceleration
         
-        # Calculate steps required to bring negative acceleration (braking) back to 0
-        steps_to_zero_dec = math.ceil(abs(temp_a_min / (positiv_jerk_limit * internal_dt)))
+        # Calculate the discrete steps required to bring negative acceleration (braking) back up to 0.
+        steps_to_zero_dec = math.ceil(abs(temp_a_min / (positiv_jerk_limit * internal_dt_sec)))
         
         for _ in range(steps_to_zero_dec):
-            # Gradually increase negative acceleration towards 0
-            temp_a_min = min(0.0, temp_a_min + (positiv_jerk_limit * internal_dt))
-            predicted_v_min += temp_a_min * internal_dt 
+            # Simulate gradually reducing the braking force towards 0.
+            temp_a_min = min(0.0, temp_a_min + (positiv_jerk_limit * internal_dt_sec))
+            predicted_v_min += temp_a_min * internal_dt_sec 
 
-        # If we risk dropping below the zero-velocity threshold:
+        # If the predicted velocity drops into the lower docking zone, force an increase in acceleration.
         if predicted_v_min < velocity_limit_thresh:
             a_decel_max = abs_max_a 
         else:
             a_decel_max = abs_min_a
 
     # --- 4. Return as [Min, Max] ---
-    # Safety check: Min must never be greater than Max
+    # Safety check: Ensure the minimum bound never exceeds the maximum bound.
     if a_decel_max > a_accel_max:
         a_decel_max = a_accel_max
         
