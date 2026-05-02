@@ -12,7 +12,7 @@ class MotionPrimitive:
     dt:int                      # the time the MotionPrimitive is used
 
 
-def get_max_steering_angle(velocity: float, max_a_lat: float, params: VehicleParameters) -> float:
+def _get_max_steering_angle(velocity: float, max_a_lat: float, params: VehicleParameters) -> float:
     """
     Compute the maximum feasible steering angle (in radians) based on a lateral
     acceleration constraint using a simplified kinematic bicycle model.
@@ -52,7 +52,7 @@ def get_max_steering_angle(velocity: float, max_a_lat: float, params: VehiclePar
     return min(res, params.max_steer)
 
 
-def get_steering_angle_range(velocity: float,
+def _get_steering_angle_range(velocity: float,
                              steering_angle: float,
                              vehicle_params: VehicleParameters,
                              max_a_lat: float,
@@ -85,7 +85,7 @@ def get_steering_angle_range(velocity: float,
         raise ValueError("Steering Angle exceeds VehicleParameters limits")
     
     # 2. Safety & Mechanical: Get max angle allowed by lateral acceleration or physical stop
-    max_steering_angle_global = get_max_steering_angle(velocity, max_a_lat, vehicle_params)
+    max_steering_angle_global = _get_max_steering_angle(velocity, max_a_lat, vehicle_params)
 
     # 3. Dynamic: Max steering travel possible within the time step (dt)
     max_steering_delta = vehicle_params.max_steer_rate * (internal_dt / 1000)
@@ -106,7 +106,7 @@ def get_steering_angle_range(velocity: float,
     return (min_steering_angle, max_steering_angle)
 
 
-def get_acceleration_range(velocity: float,
+def _get_acceleration_range(velocity: float,
                            velocity_limit: float,
                            velocity_limit_tolerance: float,
                            velocity_limit_thresh: float,
@@ -303,7 +303,7 @@ def get_motion_primitives(velocity: float,
     motion_primitives: list[MotionPrimitive] = []
     
     # 2. Get the dynamically feasible minimum and maximum acceleration bounds
-    acceleration_min, acceleration_max = get_acceleration_range(
+    acceleration_min, acceleration_max = _get_acceleration_range(
         velocity = velocity,
         velocity_limit = velocity_limit,
         velocity_limit_tolerance = velocity_limit_tolerance,
@@ -341,31 +341,45 @@ def get_motion_primitives(velocity: float,
         target_velocity = max(0.0, velocity + (acceleration_value * internal_dt_sec))
         
         # Retrieve the dynamically feasible steering bounds for the predicted target velocity
-        min_angle, max_angle = get_steering_angle_range(
+        min_angle, max_angle = _get_steering_angle_range(
             velocity = target_velocity,
             steering_angle = steering_angle,
             vehicle_params = vehicle_params,
             max_a_lat = max_a_lat,
             internal_dt = internal_dt
         )
-        
-        # Calculate the geometric center and radius of the available steering envelope
-        center_point = (max_angle + min_angle) / 2.0
-        distance_from_center = abs(max_angle - center_point)
 
-        # Generate discrete steering commands based on the provided percentages
-        for split in steering_angle_split:
-            # Convert the percentage split (-100 to 100) into a steering offset
-            steering_angle_delta_split = distance_from_center * (split / 100.0)
-            steering_angle_value = center_point + steering_angle_delta_split
+        # Check if the steering envelope is collapsed (e.g., restricted by lateral acceleration).
+        if abs(max_angle - min_angle) < 1e-5:
             
-            # Instantiate the primitive and add it to the expansion list
+            # Instantiate a single primitive to avoid creating multiple identical duplicates
             motion_primitive = MotionPrimitive(
-                steering_angle = steering_angle_value,
-                acceleration = acceleration_value,
-                dt = internal_dt
+                steering_angle=min_angle,
+                acceleration=acceleration_value,
+                dt=internal_dt
             )
             motion_primitives.append(motion_primitive)
+            
+        else:
+            # Calculate the geometric center and radius of the available steering envelope
+            center_point = (max_angle + min_angle) / 2.0
+            distance_from_center = abs(max_angle - center_point)
+
+            # Generate discrete steering commands based on the provided percentages
+            for split in steering_angle_split:
+                # Convert the percentage split (-100 to 100) into a steering offset
+                steering_angle_delta_split = distance_from_center * (split / 100.0)
+                steering_angle_value = center_point + steering_angle_delta_split
+                
+                # Instantiate the primitive and add it to the expansion list
+                motion_primitive = MotionPrimitive(
+                    steering_angle = steering_angle_value,
+                    acceleration = acceleration_value,
+                    dt = internal_dt
+                )
+                motion_primitives.append(motion_primitive)
+
+   
 
     # Sort primitives to optimize A* expansion (straight and constant speed first):
     # 1. Absolute steering magnitude (closest to 0 straight ahead first).
@@ -401,7 +415,7 @@ def print_motion_primitives(primitives: list[MotionPrimitive]) -> None:
     # 3. Iterate through all primitives and print them with formatting
     for i, mp in enumerate(primitives, start=1):
         steer_str = f"{mp.steering_angle:.5f}"
-        accel_str = f"{mp.acceleration:.2f}"
+        accel_str = f"{mp.acceleration:.5f}"
         
         print(f"{i:<5} | {steer_str:<22} | {accel_str:<22} | {mp.dt:<10}")
     
@@ -459,7 +473,7 @@ def main():
 
 
     ## Benchmarking
-    t  = timeit.timeit(lambda: get_acceleration_range(velocity = 5,
+    t  = timeit.timeit(lambda: _get_acceleration_range(velocity = 55.55,
                            velocity_limit = 13.88,
                            velocity_limit_tolerance = 0.55,
                            velocity_limit_thresh = 0.55,
@@ -485,13 +499,13 @@ def main():
     #                       internal_dt = 100)
     #print(res)
 
-    res = get_motion_primitives(velocity=5,
-                                steering_angle=0,
+    res = get_motion_primitives(velocity=55.55,
+                                steering_angle=0.7,
                                 vehicle_params=vehicle,
                                 acceleration_split=[0,25,50,75,100],
                                 steering_angle_split=[-100,-50,-25,0,25,50,100],
                                 max_a_lat=3,
-                                velocity_limit=13.88,
+                                velocity_limit=60,
                                 velocity_limit_tolerance=0.55,
                                 velocity_limit_thresh=0.55,
                                 acceleration=0,
