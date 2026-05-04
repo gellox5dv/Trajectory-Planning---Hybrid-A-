@@ -50,11 +50,12 @@ class DynamicState:
     yaw: float
     vx: float
     vy: float
+    beta: float = 0.0
     yaw_rate: float
     steer: float
     timestamp: float = 0.0
 
-def nonlinear_bicycle_model(
+def bicycle_model(
     state: EgoStateStamped,
     control: EgoInput,
     params: VehicleParameters,
@@ -78,69 +79,93 @@ def nonlinear_bicycle_model(
     steer_new = np.clip(steer_new, -params.max_steer, params.max_steer)
     # Update velocity with acceleration limits
     acc_clamped = np.clip(control.acceleration, -params.max_deceleration, params.max_acceleration)
-    v_new = state.v + acc_clamped * dt
-    v_new = max(v_new, 0.0)  # Ensure velocity doesn't go negative
+    v_new = max(state.v + acc_clamped * dt, 0.0) # Ensure velocity doesn't go negative
 
-    # Tire Slip angle. Fomurlas used from "https://arxiv.org/pdf/2306.04857"
+    if v_new > 1e-3:
+        Cf, Cr   = params.Cf, params.Cr
+        lf, lr   = params.Lf, params.Lr
+        m, Iz, v = params.m, params.Iz, v_new
 
-        # Formulas:
-        # alpha_f ≈ steer - arctan(Lf * yaw_rate / vx)   [front tire]
-        # alpha_r ≈ -arctan(Lr * yaw_rate / vx)         [rear tire]
-    if abs(v_new) > 1e-6:
-        # Update yaw angle using kinematic bicycle model
-        yaw_rate_approx = (v_new / params.L) * np.tan(steer_new)
-    
-        alpha_f = steer_new - np.arctan2 (
-            params.Lf * yaw_rate_approx, v_new
-        )
-        alpha_r = -np.arctan2 (
-            params.Lr * yaw_rate_approx, v_new
-        )
+        #Linear state space 
+        A11 = -(Cf + Cr) / (m * v)
+        A12 = (-lf * Cf + lr * Cr) / (m * v**2) - 1.0
+        A21 = (-lf * Cf + lr * Cr) / Iz
+        A22 = -(lf**2 * Cf + lr**2 * Cr) / (Iz * v)
+
+        # B vector
+        B1 = Cf / (m * v)
+        B2 = lf * Cf / Iz
+
+        psi_dot = (v / params.L) * np.tan(steer_new)
+        beta    = 0.0
+
+        # Derivates
+        beta_dot = A11 * beta + A12 * psi_dot + B1 * steer_new
+        psi_ddot = A21 * beta + A22 * psi_dot + B2 * steer_new
+
+        # Integrate
+        beta_new = beta + beta_dot * dt
+        psi_dot_new = psi_dot + psi_ddot * dt
     else:
-        alpha_f = 0.0
-        alpha_r = 0.0
-    beta = np.arctan(
-        (-params.Lf * np.tan(alpha_r) + params.Lr * np.tan(steer_new))
-        / (params.Lf + params.Lr)
-    )
+        beta_new = 0.0
+        psi_dot_new = 0.0
+    
+    yaw_new = state.yaw + psi_dot_new * dt
+    x_new   = state.x + v_new * np.cos(beta_new + state.yaw) * dt
+    y_new   = state.y + v_new * np.sin(beta_new + state.yaw) * dt
 
-    # Side Slip angle beta
-
-        # Formula:
-        # β = arctan((-Lf*tan(αr) + Lr*tan(δ - αf)) / (Lf + Lr))
-    beta = np.arctan(
-        (-params.Lf * np.tan(alpha_r) + params.Lr * np.tan(steer_new - alpha_f))
-        / (params.Lf + params.Lr)
-    )
-
-    # Yaw rate
-
-        # Fomula:
-        # ψ_ = V*cos(β) * (tan(δ - αf) + tan(αr)) / (Lf + Lr)
-    yaw_rate = (
-        v_new * np.cos(beta) * (np.tan(steer_new - alpha_f) + np.tan(alpha_r))
-        / (params.Lf + params.Lr)
-    )
-    yaw_new = state.yaw + yaw_rate * dt
-
-    # Position
-
-        # Formulas:
-        # X_ = V * cos(β + ψ)
-        # Y_ = V * sin(β + ψ)
-    x_new = state.x + v_new * np.cos(beta + state.yaw) * dt
-    y_new = state.y + v_new * np.sin(beta + state.yaw) * dt
-    # Update timestamp
-    timestamp_new = state.timestamp + dt
     return EgoStateStamped(
         x=x_new,
         y=y_new,
         yaw=yaw_new,
         v=v_new,
         steer=steer_new,
-        timestamp=timestamp_new
+        timestamp=state.timestamp + dt
     )
 
+class Vehicle:
+    def __init__(self, x, y, yaw, v):
+
+        self.length        = 2.338
+        self.width         = 1.381
+        self.rear_to_wheel = 0.339
+        self.wheel_legth   = 0.531
+        self.wheel_width   = 0.125
+        self.track         = 1.094
+        self.wheel_base    = 1.686
+
+        # State
+        self.x    = x
+        self.y    = y
+        self.yaw  = yaw
+        self.v    = v
+        self.steer = 0.0
+        self.lat_acc = 0.0
+
+        # Dynamics
+        self.Caf  = 2 * 32857.5
+        self.Car  = 2 * 32857.5
+        self.mass = 1500.0
+        self.lf   = 0.9442
+        self.lr   = 0.7417
+        self.Iz   = 430.166
+
+        # Build Vehicle Parameters from the above
+        self.params = VehicleParameters(
+            max_steer         = 0.6,    # ~34 degrees like a typical car
+            max_steer_rate    = 0.5,    # rad/s
+            L                 = self.wheel_base,
+            Lf                = self.lf,
+            Lr                = self.lr,
+            width             = self.width,
+            length            = self.length,
+            m                 = self.mass,
+            Iz                = self.Iz,
+            Cf                = self.Caf,
+            Cr                = self.Car,
+            max_acceleration  = 3.0,    #measured m/s²
+            max_deceleration  = 5.0,    #measured m/s²
+        )
 class DynamicBicycleModel:
 
     def __init__(self, params: VehicleParameters) -> None:
