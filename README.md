@@ -105,14 +105,100 @@ def check_collision(
     pass
 ```
 
+### `get_distance_to_objects`
+
+#### 1. Type Definitions & Function Signature
+
 ```python
-def is_collision_free(
-    state: EgoStateStamped,
-    env: PredictedEnvironment
-) -> bool:
-    """Checks whether a state is collision-free within the predicted environment at a given time (defined in the timestamp in EgoStateStamped)."""
-    pass
+from typing import List, Tuple, Optional, TypedDict
+
+class ObjectDistance(TypedDict):
+    id: int
+    min_distance: float  # Minimum distance found in the interval as a float
+
+def get_distance_to_objects(
+    current_ego: EgoStateStamped,
+    previous_ego: EgoStateStamped,
+    predicted_env: PredictedEnvironment,
+    vehicle_params: VehicleParameters,
+    resolution_ms: int
+) -> Tuple[Optional[List[ObjectDistance]], bool]:
+    """
+    Checks the interval between two planning steps for collisions and 
+    calculates aggregated distances to all objects.
+    """
 ```
+
+---
+
+#### 2. Functional Requirements
+
+##### FR1: Temporal Sub-sampling
+The function must discretize the time interval between `previous_ego.timestamp` and `current_ego.timestamp` into smaller steps defined by `resolution_ms` (e.g., 10 ms).  
+This prevents tunneling effects, where collisions between large discrete steps are missed.
+
+---
+
+##### FR2: State Interpolation
+For each sub-step, the function must linearly interpolate the states (position `x, y` and orientation `yaw`) for:
+- the ego vehicle  
+- all objects in `predicted_env`
+
+**Note:**  
+Special care must be taken for `yaw` interpolation to correctly handle angle wrap-around (e.g., transition from `+π` to `-π`).
+
+---
+
+##### FR3: Ego Coordinate Transformation (Rear-to-Center)
+The `EgoState` reference point is the center of the rear axle.  
+For geometric collision checking, this must be transformed to the vehicle’s geometric center at every sub-step.
+
+---
+
+##### FR4: OBB Distance Calculation
+The function must model:
+- the ego vehicle  
+- all dynamic objects  
+
+as Oriented Bounding Boxes (OBB) using their respective length and width.
+
+It must compute the minimum distance between these rectangles.
+
+---
+
+##### FR5: Performance – Early Exit (Critical)
+To optimize Hybrid A* search, the function must implement fail-fast logic:
+
+- If at any sub-step the distance to any object is ≤ 0:
+  - Immediately terminate execution  
+  - Return:
+    ```python
+    (None, True)
+    ```
+- No further sub-steps or objects should be processed after a collision is detected
+
+---
+
+##### FR6: Result Aggregation
+If the full interval is processed without any collision:
+
+- Return:
+  ```python
+  (List[ObjectDistance], False)
+  ```
+
+- The list must contain:
+  - One entry per object ID  
+  - The minimum distance (float) encountered across all interpolated sub-steps  
+
+---
+
+#### 3. Implementation Hints
+
+##### Loop Order
+- Iterate time steps first, then objects  
+- Ensures early detection of collisions near the start of the trajectory  
+
 
 ---
 
