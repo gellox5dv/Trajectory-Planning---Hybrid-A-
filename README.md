@@ -193,6 +193,7 @@ If the full interval is processed without any collision:
 
 ---
 
+
 #### 3. Implementation Hints
 
 ##### Loop Order
@@ -201,6 +202,24 @@ If the full interval is processed without any collision:
 
 
 ---
+
+```python
+def get_ego_lane_info(
+    ego_state: EgoState
+    vehicle_params: VehicleParameters,
+    lanes: List[Lane]
+    
+) -> Tuple[int, float, float, float]:
+    """
+    Returns:
+    lane_id: int,
+    distance_to_lane_center: float [m]
+    yaw_offset_to_lane_direction: float, [rad]
+    lane_occlusion: float [e.g. 0.8]
+    """
+```
+
+
 
 # Motion & Prediction
 
