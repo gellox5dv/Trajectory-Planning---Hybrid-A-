@@ -1,6 +1,24 @@
-from math import cos, sin
-from typing import List
+from math import cos, pi, sin
+from typing import List, Optional, Tuple
 from models.models import Vector2D
+
+
+def global_to_ego_axis(poi_x: float, poi_y: float, ego_x: float, ego_y: float, ego_yaw: float, poi_yaw: Optional[float] = None) -> Tuple[float, float, Optional[float]]:
+    """Convert a point of interest (POI) from global coordinates to the ego vehicle's local coordinate frame."""
+
+    dx = poi_x - ego_x
+    dy = poi_y - ego_y
+
+    x_ego =  dx * cos(ego_yaw) + dy * sin(ego_yaw)
+    y_ego = -dx * sin(ego_yaw) + dy * cos(ego_yaw)
+
+    if poi_yaw is not None:
+        yaw_ego = poi_yaw - ego_yaw
+        yaw_ego = (yaw_ego + pi) % (2 * pi) - pi
+        return x_ego, y_ego, yaw_ego
+
+    return x_ego, y_ego, None
+
 
 def get_bbox_corners(x: float, y: float, yaw: float, length: float, width: float) -> List[Vector2D]:
     """Compute the corners of a bounding box given its center position, orientation, length, and width."""

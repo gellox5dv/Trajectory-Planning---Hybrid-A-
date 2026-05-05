@@ -1,7 +1,7 @@
 from .environment import environment
 from math import cos, sin
 from typing import Tuple
-from .helper import get_bbox_corners, check_line_intersection
+from .helper import get_bbox_corners, check_line_intersection, global_to_ego_axis
 from models.models import (
     EgoStateStamped, EgoState, EgoInput, Environment, Vector2D, DynamicObjectStamped, 
     DynamicObject, VehicleParameters, PredictedEnvironment, Lane
@@ -29,47 +29,43 @@ class Simulation:
     def _check_collision_object(
         self,
         ego_state: EgoStateStamped,
-        obj: DynamicObjectStamped
+        obj: DynamicObjectStamped,
+        ego_params: VehicleParameters
     ) -> bool:
         """Check if the ego vehicle collides with the given dynamic object."""
 
-        ego_width = VehicleParameters.WIDTH
-        ego_length = VehicleParameters.LENGTH
         ego_x, ego_y, ego_yaw = self._get_x_y_yaw_from_state(ego_state)
+        obj_x_g, obj_y_g, obj_yaw_g = self._get_x_y_yaw_from_state(obj)
+        
+        obj_x_ego, obj_y_ego, obj_yaw_ego = global_to_ego_axis(obj_x_g, obj_y_g, ego_x, ego_y, ego_yaw, obj_yaw_g)
+        obj_corners = get_bbox_corners(obj_x_ego, obj_y_ego, obj_yaw_ego, obj.state.length, obj.state.width)
 
-        ego_corners = get_bbox_corners(ego_x, ego_y, ego_yaw, ego_length, ego_width)
+        ego_center_x = ego_params.length / 2 - ego_params.rear_to_wheel
+        ego_center_y = 0.0
+        ego_corners = get_bbox_corners(ego_center_x, ego_center_y, 0.0, ego_params.length, ego_params.width)
 
-        obj_width = obj.state.width
-        obj_length = obj.state.length
-        obj_x, obj_y, obj_yaw = self._get_x_y_yaw_from_state(obj)
-
-        obj_corners = get_bbox_corners(obj_x, obj_y, obj_yaw, obj_length, obj_width)
-
-        # check if any boundary of the ego bounding box intersects with any boundary of the object bounding box
         for i in range(4):
             for j in range(4):
-                if check_line_intersection(
-                    ego_corners[i],
-                    ego_corners[(i + 1) % 4],
-                    obj_corners[j],
-                    obj_corners[(j + 1) % 4]
-                ):
+                if check_line_intersection(ego_corners[i], ego_corners[(i + 1) % 4], obj_corners[j], obj_corners[(j + 1) % 4]):
                     return True
+        
         return False
 
 
     def _check_collision_lane(
         self,
         ego_state: EgoStateStamped,
-        lane: Lane
+        lane: Lane,
+        ego_params: VehicleParameters
     ) -> bool:
         """Check if the ego vehicle collides with the lane boundaries."""
 
-        ego_width = VehicleParameters.WIDTH
-        ego_length = VehicleParameters.LENGTH
+        ego_center_offset = ego_params.length / 2 - ego_params.rear_to_wheel
         ego_x, ego_y, ego_yaw = self._get_x_y_yaw_from_state(ego_state)
+        ego_x += ego_center_offset * cos(ego_yaw)
+        ego_y += ego_center_offset * sin(ego_yaw)
 
-        ego_corners = get_bbox_corners(ego_x, ego_y, ego_yaw, ego_length, ego_width)
+        ego_corners = get_bbox_corners(ego_x, ego_y, ego_yaw, ego_params.length, ego_params.width)
 
         f1 = False  # flag to indicate if atleast one centerline point is within 10 m of ego position
 
@@ -104,17 +100,18 @@ class Simulation:
     def _is_collision_free(
         self,
         ego_state: EgoStateStamped,
-        env: PredictedEnvironment
+        env: PredictedEnvironment,
+        ego_params: VehicleParameters
     ) -> bool:
         """Check if the ego state is collision-free with objects and lanes."""
 
         for obj in env.dynamic_objects:
-            if self._check_collision_object(ego_state, obj):
+            if self._check_collision_object(ego_state, obj, ego_params):
                 return False
         
         #TODO: implement current lane tracking
         for lane in env.lanes:
-            if self._check_collision_lane(ego_state, lane):
+            if self._check_collision_lane(ego_state, lane, ego_params):
                 return False
 
         return True
