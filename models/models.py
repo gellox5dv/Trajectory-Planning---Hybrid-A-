@@ -93,8 +93,8 @@ class DynamicObject:
     pos: Vector2D               # position [m]
     yaw: float                  # orientation [rad]
 
-    velocity: Vector2D          # velocity (vx, vy) [m/s]
-    acceleration: Vector2D      # acceleration (ax, ay) [m/s²]
+    velocity: float             # velocity (vx, vy) [m/s]
+    acceleration: float         # acceleration (ax, ay) [m/s²]
 
     width: float                # bounding box width [m]
     length: float               # bounding box length [m]
@@ -132,7 +132,7 @@ class Lane:
 
     speed_limit: float          # speed limit [m/s]
 
-    cumulative_lengths: List[float]
+    cumulative_lengths: Optional[List[float]] = None
     # arc length s at each centerline point [m]
     # used for fast longitudinal position computation
 

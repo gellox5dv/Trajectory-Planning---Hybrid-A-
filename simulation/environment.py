@@ -21,26 +21,32 @@ lane2 = Lane(
     speed_limit = 16.0 + 2/3    # 60 km/h
 )
 
-obs1 = DynamicObject(
-    id = 1,
-    obj_class = ObjectType.VEHICLE,
-    pos = Vector2D(x = 100.0, y = 2.0),
-    yaw = 0.0,
-    velocity = 8.0 + 1/3,       # 30 km/h
-    acceleration = 0.0,
-    width = VEHICLE_DIMS.width,
-    length = VEHICLE_DIMS.length
+obs1 = DynamicObjectStamped(
+    timestamp = 0,
+    state = DynamicObject(
+        id = 1,
+        obj_class = ObjectType.VEHICLE,
+        pos = Vector2D(x = 100.0, y = 2.0),
+        yaw = 0.0,
+        velocity = 8.0 + 1/3,       # 30 km/h
+        acceleration = 0.0,
+        width = VEHICLE_DIMS.width,
+        length = VEHICLE_DIMS.length
+    )
 )
 
-obs2 = DynamicObject(
-    id = 2,
-    obj_class = ObjectType.VEHICLE,
-    pos = Vector2D(x = 1800.0, y = 6.0),
-    yaw = pi,
-    velocity = 13.0 + 8/9,      # 50 km/h
-    acceleration = 0.0,
-    width = VEHICLE_DIMS.width,
-    length = VEHICLE_DIMS.length
+obs2 = DynamicObjectStamped(
+    timestamp = 0,
+    state = DynamicObject(
+        id = 2,
+        obj_class = ObjectType.VEHICLE,
+        pos = Vector2D(x = 1800.0, y = 6.0),
+        yaw = pi,
+        velocity = 13.0 + 8/9,      # 50 km/h
+        acceleration = 0.0,
+        width = VEHICLE_DIMS.width,
+        length = VEHICLE_DIMS.length
+    )
 )
 
 environment = Environment(
