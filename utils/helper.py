@@ -1,6 +1,7 @@
 from math import cos, pi, sin
 from typing import List, Optional, Tuple
-from models.models import Vector2D
+from configparser import ConfigParser
+from models.models import Vector2D, VehicleParameters
 
 
 def global_to_ego_axis(poi_x: float, poi_y: float, ego_x: float, ego_y: float, ego_yaw: float, poi_yaw: Optional[float] = None) -> Tuple[float, float, Optional[float]]:
@@ -58,3 +59,31 @@ def check_line_intersection(p1: Vector2D, p2: Vector2D, p3: Vector2D, p4: Vector
     u = ((p3.x - p1.x) * d1.y - (p3.y - p1.y) * d1.x) / det
 
     return (0 <= t <= 1) and (0 <= u <= 1)
+
+
+def load_vehicle_parameters() -> VehicleParameters:
+    """Load vehicle parameters from the configuration file."""
+
+    config = ConfigParser()
+    config.read('config.ini')
+
+    return VehicleParameters(
+        max_steer = config.getfloat('vehicle', 'max_steer'),
+        max_steer_rate = config.getfloat('vehicle', 'max_steer_rate'),
+        Lf = config.getfloat('vehicle', 'lf'),
+        Lr = config.getfloat('vehicle', 'lr'),
+        Iz = config.getfloat('vehicle', 'Iz'),
+        wheel_length = config.getfloat('vehicle', 'wheel_length'),
+        wheel_width = config.getfloat('vehicle', 'wheel_width'),
+        wheel_base = config.getfloat('vehicle', 'wheel_base'),
+        track = config.getfloat('vehicle', 'track'),
+        width = config.getfloat('vehicle', 'width'),
+        length = config.getfloat('vehicle', 'length'),
+        rear_to_wheel = config.getfloat('vehicle', 'rear_to_wheel'),
+        m = config.getfloat('vehicle', 'm'),
+        Cf = eval(config.get('vehicle', 'Cf')),
+        Cr = eval(config.get('vehicle', 'Cr')),
+        max_acceleration = config.getfloat('vehicle', 'max_acceleration'),
+        max_deceleration = config.getfloat('vehicle', 'max_deceleration'),
+        mu = config.getfloat('vehicle', 'mu')
+    )
