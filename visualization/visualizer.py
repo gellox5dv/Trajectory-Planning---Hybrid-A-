@@ -100,9 +100,9 @@ def _draw_ego(ax, ego, vehicle_params) -> None:
     
     _draw_box(
         ax=ax,  # axes to draw on
-        x=ego_state.pos.x,  # ego vehicle x-position
-        y=ego_state.pos.y,  # ego vehicle y-position
-        yaw=ego_state.yaw,  # ego vehicle heading angle
+        x=ego.pos.x,  # ego vehicle x-position
+        y=ego.pos.y,  # ego vehicle y-position
+        yaw=ego.yaw,  # ego vehicle heading angle
         length=vehicle_params.length,  # ego vehicle length
         width=vehicle_params.width,  # ego vehicle width
         label="Ego",  # label shown near the ego vehicle
@@ -111,10 +111,10 @@ def _draw_ego(ax, ego, vehicle_params) -> None:
     # heading indicator
     arrow_len = max(vehicle_params.length * 0.6, 0.5)  # choose arrow length based on vehicle length with a minimum value
     ax.arrow(
-        ego_state.pos.x,  # arrow start x-position
-        ego_state.pos.y,  # arrow start y-position
-        arrow_len * math.cos(ego_state.yaw),  # arrow x-component based on heading direction
-        arrow_len * math.sin(ego_state.yaw),  # arrow y-component based on heading direction
+        ego.pos.x,  # arrow start x-position
+        ego.pos.y,  # arrow start y-position
+        arrow_len * math.cos(ego.yaw),  # arrow x-component based on heading direction
+        arrow_len * math.sin(ego.yaw),  # arrow y-component based on heading direction
         head_width=max(vehicle_params.width * 0.2, 0.15),  # arrow head width scaled from vehicle width
         length_includes_head=True,  # make the arrow length include the head
     )
