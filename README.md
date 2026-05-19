@@ -367,7 +367,7 @@ def plan(request: PlanningRequest) -> PlanResult:
 
 ---
 
-# Control (MPC)
+# Control 
 
 **Responsible: (TBD)**
 
@@ -379,7 +379,24 @@ It is responsible for:
 * handling model inaccuracies
 * ensuring smooth and stable vehicle behavior
 
-Implementation not defined yet.
+```python
+class Controller:
+    def __init__(self, params: VehicleParameters) -> None:
+        """
+        Initializes the Controller.
+        """
+
+    def calc_acceleration(Ego: EgoStateStamped, params: VehicleParameters, Waypoints: Trajectory) -> float:
+        """
+        Calculate the acceleration, given the Trajectory.
+        """
+
+
+    def calc_steer_rate(Ego: EgoStateStamped, params: VehicleParameters, Waypoints: Trajectory) -> float:
+        """
+        Calculate the steering-rate, given the Trajectory.
+        """
+```
 
 ---
 
