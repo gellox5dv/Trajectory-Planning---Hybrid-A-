@@ -1,6 +1,7 @@
 from .environment import environment
+from typing import Tuple
 from models.models import (
-    EgoStateStamped, EgoState, EgoInput, Environment, Vector2D, DynamicObjectStamped, 
+    EgoStateStamped, EgoState, EgoInput, Environment, Trajectory, Vector2D, DynamicObjectStamped, 
     DynamicObject, VehicleParameters, PredictedEnvironment, Lane
 )
 
@@ -12,7 +13,7 @@ class Simulation:
         state = EgoState(
             pos = Vector2D(x = 50.0, y = 2.0),
             yaw = 0.0,
-            velocity = 50.0
+            velocity = 13.0 + 8/9
         )
     )
 
@@ -27,7 +28,11 @@ class Simulation:
         return self.curr_env
     
 
-    def apply_control(self, control: EgoInput) -> None:
+    def apply_steer_rate(self, steer_rate: float) -> None:
+        ...
+    
+
+    def apply_acceleration(self, acc: float) -> None:
         ...
     
 
