@@ -219,10 +219,10 @@ class Trajectory:
 
 @dataclass
 class PlanResult:
-    success: bool                   # True if valid plan found
-
-    trajectory: Optional[Trajectory]  # resulting trajectory (None if failed)
-
-    cost: float                     # total trajectory cost
-
-    status_message: str             # diagnostic info 
+    success: bool                       # True if valid plan found
+    goal_reached: bool                  # True if trajectory reaches goal region
+    
+    trajectory: Optional[Trajectory]    # resulting trajectory (None if failed)
+    cost: float                         # total trajectory cost
+    
+    status_message: str                 # diagnostic info
