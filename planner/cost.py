@@ -1,78 +1,65 @@
-import math
-from models.models import EgoStateStamped
+from models.models import *
+from planner.cost_centers import *
+from planner.dubins_path_planner import get_dubins_path_length
+from planner.motion_primitives import _get_max_steering_angle
 
+import unittest
+from unittest.mock import patch
 
-
-#--- Comfort Costs ---------------------------------------------------------------------
-
-def get_dt_seconds(prev_state: EgoStateStamped, curr_state: EgoStateStamped) -> float:
-    dt = (curr_state.timestamp - prev_state.timestamp) / 1000.0
-    # Prevent division by zero in case of identical timestamps
-    return max(dt, 1e-6)
-
-def cost_jerk(prev_state: EgoStateStamped, curr_state: EgoStateStamped):
-    dt = get_dt_seconds(prev_state, curr_state)
-    
-    # Calculate global jerk via finite differences
-    jerk_x = (curr_state.state.acceleration.x - prev_state.state.acceleration.x) / dt
-    jerk_y = (curr_state.state.acceleration.y - prev_state.state.acceleration.y) / dt
-    
-    # Project into local vehicle coordinate system using current yaw
-    yaw = curr_state.state.yaw
-    cos_y = math.cos(yaw)
-    sin_y = math.sin(yaw)
-    
-    jerk_long = jerk_x * cos_y + jerk_y * sin_y
-    jerk_lat = -jerk_x * sin_y + jerk_y * cos_y
-    
-    # Cost calculation (separated for easy adjustments)
-    cost_long = jerk_long ** 2
-    cost_lat = jerk_lat ** 2
-    
-    return {"long": cost_long, "lat": cost_lat}
-
-def cost_acceleration(curr_state: EgoStateStamped):
-    # Acceleration is already present in the state, no finite difference needed
-    accel_x = curr_state.state.acceleration.x
-    accel_y = curr_state.state.acceleration.y
-    
-    yaw = curr_state.state.yaw
-    cos_y = math.cos(yaw)
-    sin_y = math.sin(yaw)
-    
-    accel_long = accel_x * cos_y + accel_y * sin_y
-    accel_lat = -accel_x * sin_y + accel_y * cos_y
-    
-    # Cost calculation (separated for easy adjustments)
-    cost_long = accel_long ** 2
-    cost_lat = accel_lat ** 2
-    
-    return {"long": cost_long, "lat": cost_lat}
-
-
-#--- Safety Costs ------------------------------------------------------------------------
-
-def cost_target_speed_delta(
-    curr_state: EgoStateStamped, 
-    target_speed: float,
-    weight_underspeed: float = 1.0,      
-    weight_overspeed: float = 5.0,       
-    exp_growth_factor: float = 1.0,      
-    max_penalty: float = 1e6             
+def calculate_cost(
+    prev_state: EgoStateStamped, 
+    curr_state: EgoStateStamped,
+    request: PlanningRequest,
+    weights: Dict[str, float]
 ) -> float:
     
-    vx = curr_state.state.velocity.x
-    vy = curr_state.state.velocity.y
-    current_speed = math.hypot(vx, vy)
-    
-    delta_v = current_speed - target_speed
-    
-    if delta_v < 0:
-        # Linear penalty for underspeed
-        return weight_underspeed * abs(delta_v)
+    if weights is None:
+        raise ValueError("Weights dictionary must be provided.")
         
-    # Exponential barrier for overspeed with overflow protection
-    safe_exponent = min(exp_growth_factor * delta_v, 50.0)
-    raw_cost = weight_overspeed * (math.exp(safe_exponent) - 1.0)
+    total_cost = 0.0
     
-    return min(raw_cost, max_penalty) 
+    # 1. Comfort: Jerk
+    jerk_costs = cost_jerk(prev_state, curr_state)
+    total_cost += weights["jerk_long"] * jerk_costs["long"]
+    total_cost += weights["jerk_lat"] * jerk_costs["lat"]
+    
+    # 2. Comfort: Acceleration
+    accel_costs = cost_acceleration(curr_state)
+    total_cost += weights["accel_long"] * accel_costs["long"]
+    total_cost += weights["accel_lat"] * accel_costs["lat"]
+    
+    # 3. Efficiency: Target Speed
+    speed_cost = cost_target_speed_delta(curr_state, request.target_speed)
+    total_cost += weights["speed"] * speed_cost
+    
+    # 4. Safety: Object Force Fields
+    object_cost = cost_objects_force_field(
+        current_ego=curr_state,
+        previous_ego=prev_state,
+        predicted_env=request.environment,
+        vehicle_params=request.vehicle_params,
+        resolution_ms=request.dt_interpolation
+    )
+    total_cost += weights["objects"] * object_cost
+    
+    return total_cost
+
+
+def calculate_heuristic_cost(state: EgoStateStamped, request: PlanningRequest):
+
+    max_steer = _get_max_steering_angle(state.state.velocity, request.max_a_lat, request.vehicle_params)
+    curvature = math.tan(max_steer) / request.vehicle_params.length
+
+    length = get_dubins_path_length(state.state.pos.x,
+                                    state.state.pos.y,
+                                    state.state.yaw,
+                                    request.goal_region.center.x,
+                                    request.goal_region.center.y,
+                                    request.goal_region.yaw,curvature)
+    
+    return length
+
+
+
+if __name__ == '__main__':
+    unittest.main()
