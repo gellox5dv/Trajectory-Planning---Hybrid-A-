@@ -86,5 +86,3 @@ def calculate_heuristic_cost(state: EgoStateStamped, request: PlanningRequest) -
 
 
 
-if __name__ == '__main__':
-    unittest.main()
