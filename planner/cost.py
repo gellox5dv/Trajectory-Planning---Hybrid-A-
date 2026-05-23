@@ -12,6 +12,19 @@ def calculate_cost(
     request: PlanningRequest,
     weights: Dict[str, float]
 ) -> float:
+    """
+    Calculates the total weighted cost for a specific state transition.
+
+    Args:
+        prev_state (EgoStateStamped): The previous state of the ego vehicle.
+        curr_state (EgoStateStamped): The current state of the ego vehicle to be evaluated.
+        request (PlanningRequest): The planning request containing environment, target speed, and vehicle params.
+        weights (Dict[str, float]): Dictionary containing weighting factors for each cost component.
+                                    Expected keys: 'jerk_long', 'jerk_lat', 'accel_long', 'accel_lat', 'speed', 'objects'.
+
+    Returns:
+        float: The aggregated total cost. Raises ValueError if weights are not provided.
+    """
     
     if weights is None:
         raise ValueError("Weights dictionary must be provided.")
@@ -45,7 +58,18 @@ def calculate_cost(
     return total_cost
 
 
-def calculate_heuristic_cost(state: EgoStateStamped, request: PlanningRequest):
+def calculate_heuristic_cost(state: EgoStateStamped, request: PlanningRequest) -> float:
+    """
+    Calculates the heuristic cost from a given state to the goal region using a Dubins path.
+
+    Args:
+        state (EgoStateStamped): The starting state for the heuristic calculation.
+        request (PlanningRequest): The planning request containing the goal region, maximum lateral 
+                                   acceleration (max_a_lat), and vehicle parameters.
+
+    Returns:
+        float: The estimated distance (Dubins path length) to the goal region.
+    """
 
     max_steer = _get_max_steering_angle(state.state.velocity, request.max_a_lat, request.vehicle_params)
     curvature = math.tan(max_steer) / request.vehicle_params.length
@@ -55,7 +79,8 @@ def calculate_heuristic_cost(state: EgoStateStamped, request: PlanningRequest):
                                     state.state.yaw,
                                     request.goal_region.center.x,
                                     request.goal_region.center.y,
-                                    request.goal_region.yaw,curvature)
+                                    request.goal_region.yaw,
+                                    curvature)
     
     return length
 
