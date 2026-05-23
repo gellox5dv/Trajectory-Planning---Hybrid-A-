@@ -142,7 +142,6 @@ def cost_objects_force_field(
 ) -> float:
     """
     Calculates proximity costs to dynamic objects using a dual force-field approach.
-    Evaluates overlaps between the ego's inflated bounding box and object force fields.
 
     Args:
         current_ego (EgoStateStamped): The current state of the ego vehicle.
