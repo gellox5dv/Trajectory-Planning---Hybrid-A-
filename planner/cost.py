@@ -70,19 +70,26 @@ def calculate_heuristic_cost(state: EgoStateStamped, request: PlanningRequest) -
     Returns:
         float: The estimated distance (Dubins path length) to the goal region.
     """
-
-    max_steer = _get_max_steering_angle(state.state.velocity, request.max_a_lat, request.vehicle_params)
-    curvature = math.tan(max_steer) / request.vehicle_params.length
-
-    length = get_dubins_path_length(state.state.pos.x,
-                                    state.state.pos.y,
-                                    state.state.yaw,
-                                    request.goal_region.center.x,
-                                    request.goal_region.center.y,
-                                    request.goal_region.yaw,
-                                    curvature)
     
-    return length
+    # 1. Calculate scalar speed from Vector2D
+    current_speed = math.hypot(state.state.velocity.x, state.state.velocity.y)
+
+    # 2. Get max steer angle for this specific speed
+    max_steer = _get_max_steering_angle(current_speed, request.max_a_lat, request.vehicle_params)
+    
+    # 3. Calculate curvature using the WHEELBASE, not the total length
+    curvature = math.tan(max_steer) / request.vehicle_params.wheel_base
+
+    # 4. Compute Dubins path length
+    length = get_dubins_path_length(
+        state.state.pos.x,
+        state.state.pos.y,
+        state.state.yaw,
+        request.goal_region.center.x,
+        request.goal_region.center.y,
+        request.goal_region.yaw,
+        curvature
+    )
 
 
 
