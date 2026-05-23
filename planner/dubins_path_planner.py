@@ -132,6 +132,11 @@ def get_dubins_path_length(s_x, s_y, s_yaw, g_x, g_y, g_yaw, curvature):
     path_length : float
         The physical length of the shortest Dubins path in meters.
     """
+
+    # Prevent division by zero: curvature ~0 means infinite turning radius.
+    # Fallback to straight-line Euclidean distance (admissible heuristic for A*).
+    if abs(curvature) < 1e-6:
+        return hypot(g_x - s_x, g_y - s_y)
     
     # 1. Calculate local coordinates of the goal relative to the start point
     # We use pure math here instead of numpy matrix multiplication for higher speed
