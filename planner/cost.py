@@ -91,5 +91,7 @@ def calculate_heuristic_cost(state: EgoStateStamped, request: PlanningRequest) -
         curvature
     )
 
+    return length
+
 
 
