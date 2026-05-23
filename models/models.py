@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Tuple, Dict, Optional
 from enum import Enum
 
 
@@ -93,8 +93,8 @@ class DynamicObject:
     pos: Vector2D               # position [m]
     yaw: float                  # orientation [rad]
 
-    velocity: Vector2D          # velocity (vx, vy) [m/s]
-    acceleration: Vector2D      # acceleration (ax, ay) [m/s²]
+    velocity: float             # velocity (vx, vy) [m/s]
+    acceleration: float         # acceleration (ax, ay) [m/s²]
 
     width: float                # bounding box width [m]
     length: float               # bounding box length [m]
@@ -126,15 +126,13 @@ class DynamicState:
 class Lane:
     id: int                     # unique lane identifier
 
-    centerline: List[Vector2D]  # ordered centerline points [m]
-                                # The direction of the lane is implicitly defined by the order of the points.
-
+    centerline: List[Tuple[Vector2D, float]]  # ordered centerline points with tangents [[m, m], rad]
 
     width: float                # total lane width [m] (± width/2 from centerline)
 
     speed_limit: float          # speed limit [m/s]
 
-    cumulative_lengths: List[float]
+    cumulative_lengths: Optional[List[float]] = None
     # arc length s at each centerline point [m]
     # used for fast longitudinal position computation
 
@@ -221,10 +219,10 @@ class Trajectory:
 
 @dataclass
 class PlanResult:
-    success: bool                   # True if valid plan found
-
-    trajectory: Optional[Trajectory]  # resulting trajectory (None if failed)
-
-    cost: float                     # total trajectory cost
-
-    status_message: str             # diagnostic info 
+    success: bool                       # True if valid plan found
+    goal_reached: bool                  # True if trajectory reaches goal region
+    
+    trajectory: Optional[Trajectory]    # resulting trajectory (None if failed)
+    cost: float                         # total trajectory cost
+    
+    status_message: str                 # diagnostic info
