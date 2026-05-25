@@ -4,6 +4,9 @@ import math
 import timeit
 from dataclasses import dataclass
 
+import hydra
+from omegaconf import DictConfig, OmegaConf
+
 
 @dataclass
 class MotionPrimitive:
@@ -12,7 +15,7 @@ class MotionPrimitive:
     dt:int                      # the time the MotionPrimitive is used
 
 
-def _get_max_steering_angle(velocity: float, max_a_lat: float, params: VehicleParameters) -> float:
+def _get_max_steering_angle(velocity: float, params: VehicleParameters, mp_cfg: DictConfig) -> float:
     """
     Compute the maximum feasible steering angle (in radians) based on a lateral
     acceleration constraint using a simplified kinematic bicycle model.
@@ -28,14 +31,14 @@ def _get_max_steering_angle(velocity: float, max_a_lat: float, params: VehiclePa
 
     Parameters
     ----------
-    v : float
+    velocity : float
         Vehicle speed in meters per second (m/s). Must be > 0.
-    max_a_lat : float
-        Maximum allowable lateral acceleration in meters per second squared (m/s²).
     params : VehicleParameters
         Vehicle parameter object containing at least:
         - L: wheelbase [m]
         - max_steer: maximum steering angle [rad]
+    mp_cfg : DictConfig
+        Configuration object containing max_a_lat: Maximum allowable lateral acceleration in meters per second squared (m/s²).
 
     Returns
     -------
@@ -48,14 +51,14 @@ def _get_max_steering_angle(velocity: float, max_a_lat: float, params: VehiclePa
         return params.max_steer
     
     # Compute steering angle using the rearranged bicycle model formula
-    res =  np.arctan((max_a_lat*params.wheel_base)/np.square(velocity))
+    res =  np.arctan((mp_cfg.max_a_lat*params.wheel_base)/np.square(velocity))
     return min(res, params.max_steer)
 
 
 def _get_steering_angle_range(velocity: float,
                              steering_angle: float,
                              vehicle_params: VehicleParameters,
-                             max_a_lat: float,
+                             mp_cfg: DictConfig,
                              internal_dt: int) -> tuple[float, float]: 
     """
     Compute the feasible steering range based on mechanical limits, 
@@ -69,8 +72,8 @@ def _get_steering_angle_range(velocity: float,
         Current Steering angle in radians.
     vehicle_params : VehicleParameters
         Vehicle constants (wheelbase, max steer, max steer rate).
-    max_a_lat : float
-        Maximum allowable lateral acceleration in m/s².
+    mp_cfg : DictConfig
+        Configuration object containing max_a_lat: Maximum allowable lateral acceleration in m/s².
     internal_dt : int
         Time step duration in milliseconds (ms).
 
@@ -85,7 +88,7 @@ def _get_steering_angle_range(velocity: float,
         raise ValueError("Steering Angle exceeds VehicleParameters limits")
     
     # 2. Safety & Mechanical: Get max angle allowed by lateral acceleration or physical stop
-    max_steering_angle_global = _get_max_steering_angle(velocity, max_a_lat, vehicle_params)
+    max_steering_angle_global = _get_max_steering_angle(velocity, vehicle_params, mp_cfg)
 
     # 3. Dynamic: Max steering travel possible within the time step (dt)
     max_steering_delta = vehicle_params.max_steer_rate * (internal_dt / 1000)
@@ -108,41 +111,30 @@ def _get_steering_angle_range(velocity: float,
 
 def _get_acceleration_range(velocity: float,
                            velocity_limit: float,
-                           velocity_limit_tolerance: float,
-                           velocity_limit_thresh: float,
                            acceleration: float,
-                           acceleration_limit: float,
-                           deceleration_limit: float,
-                           positiv_jerk_limit: float,
-                           negativ_jerk_limit: float,
+                           mp_cfg: DictConfig,
                            internal_dt: int) -> tuple[float, float]:
     """
     Calculates the permissible acceleration range [a_min, a_max] for the next time step.
     Takes jerk limits, velocity limits, and tolerance bands into account for predictive 
     and deadbeat control.
 
-    
     Parameters
     ----------
     velocity : float
         Current vehicle speed in m/s.
     velocity_limit : float
         The target maximum speed limit in m/s.
-    velocity_limit_tolerance : float
-        Upper tolerance above the velocity limit. Exceeding this triggers maximum hard braking.
-    velocity_limit_thresh : float
-        Threshold defining the docking zone (below the limit and above 0) 
-        to smoothly transition into deadbeat control and prevent chattering.
     acceleration : float
         Current vehicle acceleration in m/s².
-    acceleration_limit : float
-        Absolute physical maximum acceleration bound (> 0) in m/s².
-    deceleration_limit : float
-        Absolute physical maximum deceleration bound (< 0) in m/s².
-    positiv_jerk_limit : float
-        Maximum allowed rate of increasing acceleration (> 0) in m/s³.
-    negativ_jerk_limit : float
-        Maximum allowed rate of decreasing acceleration (< 0) in m/s³.
+    mp_cfg : DictConfig
+        Configuration object containing:
+        - velocity_limit_tolerance: Upper tolerance above the velocity limit. Exceeding this triggers maximum hard braking.
+        - velocity_limit_thresh: Threshold defining the docking zone (below the limit and above 0) to smoothly transition into deadbeat control and prevent chattering.
+        - acceleration_limit: Absolute physical maximum acceleration bound (> 0) in m/s².
+        - deceleration_limit: Absolute physical maximum deceleration bound (< 0) in m/s².
+        - positiv_jerk_limit: Maximum allowed rate of increasing acceleration (> 0) in m/s³.
+        - negativ_jerk_limit: Maximum allowed rate of decreasing acceleration (< 0) in m/s³.
     internal_dt : int
         Time step duration in seconds (ms).
 
@@ -160,13 +152,13 @@ def _get_acceleration_range(velocity: float,
 
     # --- 1. Physical limits for the current time step (Jerk limitation) ---
     # Determine the mechanically achievable acceleration boundaries for this specific time step.
-    abs_max_a = min(acceleration + (positiv_jerk_limit * internal_dt_sec), acceleration_limit)
-    abs_min_a = max(acceleration + (negativ_jerk_limit * internal_dt_sec), deceleration_limit)
+    abs_max_a = min(acceleration + (mp_cfg.positiv_jerk_limit * internal_dt_sec), mp_cfg.acceleration_limit)
+    abs_min_a = max(acceleration + (mp_cfg.negativ_jerk_limit * internal_dt_sec), mp_cfg.deceleration_limit)
 
     # --- 2. Calculate maximum permissible acceleration (a_accel_max) ---
     
     # CASE A: Velocity strictly exceeds the upper tolerance band.
-    if velocity > (velocity_limit + velocity_limit_tolerance):
+    if velocity > (velocity_limit + mp_cfg.velocity_limit_tolerance):
         # Force maximum possible deceleration (initiate hard braking).
         a_accel_max = abs_min_a
         a_decel_max = abs_min_a
@@ -174,7 +166,7 @@ def _get_acceleration_range(velocity: float,
         return float(a_decel_max), float(a_accel_max)
 
     # CASE B: Velocity is in the upper docking zone or within the tolerance band.
-    elif velocity >= (velocity_limit - velocity_limit_thresh):
+    elif velocity >= (velocity_limit - mp_cfg.velocity_limit_thresh):
         # Apply deadbeat control to hit V_limit exactly, strictly bounded by physical jerk limits.
         req_a_max = (velocity_limit - velocity) / internal_dt_sec    
         a_accel_max = min(req_a_max, abs_max_a)
@@ -188,15 +180,15 @@ def _get_acceleration_range(velocity: float,
         temp_a = acceleration
         
         # Calculate the discrete steps required to bring current acceleration down to 0.
-        steps_to_zero = math.ceil(abs(temp_a / (negativ_jerk_limit * internal_dt_sec)))
+        steps_to_zero = math.ceil(abs(temp_a / (mp_cfg.negativ_jerk_limit * internal_dt_sec)))
         
         for _ in range(steps_to_zero):
             # Simulate gradually shedding acceleration towards 0.
-            temp_a = max(0.0, temp_a + (negativ_jerk_limit * internal_dt_sec))
+            temp_a = max(0.0, temp_a + (mp_cfg.negativ_jerk_limit * internal_dt_sec))
             predicted_v += temp_a * internal_dt_sec
 
         # If the predicted velocity enters the upper docking zone, enforce maximum deceleration limit.
-        if predicted_v > (velocity_limit - velocity_limit_thresh):
+        if predicted_v > (velocity_limit - mp_cfg.velocity_limit_thresh):
             a_accel_max = abs_min_a
         else:
             a_accel_max = abs_max_a
@@ -205,7 +197,7 @@ def _get_acceleration_range(velocity: float,
     # Goal: Prevent the vehicle from reversing (v < 0).
 
     # CASE D: Velocity is in the lower docking zone (approaching standstill).
-    if velocity <= velocity_limit_thresh:
+    if velocity <= mp_cfg.velocity_limit_thresh:
         # Apply deadbeat control to bring velocity exactly to 0, bounded by physical jerk limits.
         req_a_min = (0.0 - velocity) / internal_dt_sec
         a_decel_max = min(req_a_min, abs_max_a)
@@ -217,15 +209,15 @@ def _get_acceleration_range(velocity: float,
         temp_a_min = acceleration
         
         # Calculate the discrete steps required to bring negative acceleration (braking) back up to 0.
-        steps_to_zero_dec = math.ceil(abs(temp_a_min / (positiv_jerk_limit * internal_dt_sec)))
+        steps_to_zero_dec = math.ceil(abs(temp_a_min / (mp_cfg.positiv_jerk_limit * internal_dt_sec)))
         
         for _ in range(steps_to_zero_dec):
             # Simulate gradually reducing the braking force towards 0.
-            temp_a_min = min(0.0, temp_a_min + (positiv_jerk_limit * internal_dt_sec))
+            temp_a_min = min(0.0, temp_a_min + (mp_cfg.positiv_jerk_limit * internal_dt_sec))
             predicted_v_min += temp_a_min * internal_dt_sec 
 
         # If the predicted velocity drops into the lower docking zone, force an increase in acceleration.
-        if predicted_v_min < velocity_limit_thresh:
+        if predicted_v_min < mp_cfg.velocity_limit_thresh:
             a_decel_max = abs_max_a 
         else:
             a_decel_max = abs_min_a
@@ -242,17 +234,9 @@ def _get_acceleration_range(velocity: float,
 def get_motion_primitives(velocity: float,
                           steering_angle: float,
                           vehicle_params: VehicleParameters,
-                          acceleration_split: list[float],
-                          steering_angle_split: list[float],
-                          max_a_lat: float,
                           velocity_limit: float,
-                          velocity_limit_tolerance: float,
-                          velocity_limit_thresh: float,
                           acceleration: float,
-                          acceleration_limit: float,
-                          deceleration_limit: float,
-                          positiv_jerk_limit: float,
-                          negativ_jerk_limit: float,
+                          mp_cfg: DictConfig,
                           internal_dt: int) -> list[MotionPrimitive]:
     """
     Generates a deterministic set of feasible motion primitives (action trajectories) 
@@ -266,30 +250,23 @@ def get_motion_primitives(velocity: float,
         Current steering angle in radians.
     vehicle_params : VehicleParameters
         Data class containing physical vehicle dimensions and constraints.
-    acceleration_split : list[float]
-        List of percentages (e.g., [0, 50, 100]) to sample the feasible acceleration range. 
-        0% represents max deceleration, 100% represents max acceleration.
-    steering_angle_split : list[float]
-        List of percentages (e.g., [-100, 0, 100]) to sample the feasible steering range.
-        -100% represents max right/left, 0% is straight, 100% represents max left/right.
-    max_a_lat : float
-        Maximum allowable lateral acceleration in m/s².
     velocity_limit : float
         The target maximum speed limit in m/s.
-    velocity_limit_tolerance : float
-        Upper tolerance above the velocity limit. Exceeding this triggers braking.
-    velocity_limit_thresh : float
-        Threshold defining the docking zone to smoothly transition into deadbeat control.
     acceleration : float
         Current vehicle acceleration in m/s².
-    acceleration_limit : float
-        Absolute physical maximum acceleration bound (> 0) in m/s².
-    deceleration_limit : float
-        Absolute physical maximum deceleration bound (< 0) in m/s².
-    positiv_jerk_limit : float
-        Maximum allowed rate of increasing acceleration (> 0) in m/s³.
-    negativ_jerk_limit : float
-        Maximum allowed rate of decreasing acceleration (< 0) in m/s³.
+    mp_cfg : DictConfig
+        Configuration object containing:
+        - acceleration_split: List of percentages (e.g., [0, 50, 100]) to sample the feasible acceleration range. 
+          0% represents max deceleration, 100% represents max acceleration.
+        - steering_angle_split: List of percentages (e.g., [-100, 0, 100]) to sample the feasible steering range.
+          -100% represents max right/left, 0% is straight, 100% represents max left/right.
+        - max_a_lat: Maximum allowable lateral acceleration in m/s².
+        - velocity_limit_tolerance: Upper tolerance above the velocity limit. Exceeding this triggers braking.
+        - velocity_limit_thresh: Threshold defining the docking zone to smoothly transition into deadbeat control.
+        - acceleration_limit: Absolute physical maximum acceleration bound (> 0) in m/s².
+        - deceleration_limit: Absolute physical maximum deceleration bound (< 0) in m/s².
+        - positiv_jerk_limit: Maximum allowed rate of increasing acceleration (> 0) in m/s³.
+        - negativ_jerk_limit: Maximum allowed rate of decreasing acceleration (< 0) in m/s³.
     internal_dt : int
         Time step duration for the primitive in milliseconds (ms).
 
@@ -306,13 +283,8 @@ def get_motion_primitives(velocity: float,
     acceleration_min, acceleration_max = _get_acceleration_range(
         velocity = velocity,
         velocity_limit = velocity_limit,
-        velocity_limit_tolerance = velocity_limit_tolerance,
-        velocity_limit_thresh = velocity_limit_thresh,
         acceleration = acceleration,
-        acceleration_limit = acceleration_limit,
-        deceleration_limit = deceleration_limit,
-        positiv_jerk_limit = positiv_jerk_limit,
-        negativ_jerk_limit = negativ_jerk_limit,
+        mp_cfg = mp_cfg,
         internal_dt = internal_dt
     )
     
@@ -324,7 +296,7 @@ def get_motion_primitives(velocity: float,
     acceleration_values: list[float] = []
 
     # 3. Generate the discrete acceleration samples based on the provided percentages
-    for split in acceleration_split:
+    for split in mp_cfg.acceleration_split:
         # Convert the percentage split (0-100) into an actual acceleration offset
         acceleration_delta_split = acceleration_delta * (split / 100.0)
         acceleration_value = acceleration_min + acceleration_delta_split
@@ -345,7 +317,7 @@ def get_motion_primitives(velocity: float,
             velocity = target_velocity,
             steering_angle = steering_angle,
             vehicle_params = vehicle_params,
-            max_a_lat = max_a_lat,
+            mp_cfg = mp_cfg,
             internal_dt = internal_dt
         )
 
@@ -366,7 +338,7 @@ def get_motion_primitives(velocity: float,
             distance_from_center = abs(max_angle - center_point)
 
             # Generate discrete steering commands based on the provided percentages
-            for split in steering_angle_split:
+            for split in mp_cfg.steering_angle_split:
                 # Convert the percentage split (-100 to 100) into a steering offset
                 steering_angle_delta_split = distance_from_center * (split / 100.0)
                 steering_angle_value = center_point + steering_angle_delta_split
@@ -427,36 +399,38 @@ def print_motion_primitives(primitives: list[MotionPrimitive]) -> None:
 
 
 
-def main():
-    vehicle  = VehicleParameters(
-            max_steer=0.7,            # maximum steering angle wheels [rad]
-            max_steer_rate=0.7  ,     # maximum steering rate wheels [rad/s]
-
-            Lf=0.9442,                  # CoG to front axle [m]
-            Lr=0.7417,                    # CoG to rear axle [m]
-            Iz=430.166,                    #Moment of inertia [kg.m2]
-
-            wheel_length= 0.531,          #Wheel length [m]
-            wheel_width = 0.125,            #Wheel width [m]
-
-            wheel_base= 1.686,            #Wheel base [m]
-            track= 1.094,                #Vehile track [m]
-
-            width= 1.381,                 # vehicle width [m]
-            length = 2.338,               # vehicle length [m]
-            rear_to_wheel = 0.339,        #Distance rear to axel [m]
-
-            m= 633,                   # mass [kg]
-
-            Cf= 2*32857.5,                    # front cornering stiffness [N/rad]
-            Cr= 2*32857.5,                   # rear cornering stiffness [N/rad]
-
-            max_acceleration= 2.0,     # max longitudinal acceleration [m/s²]
-            max_deceleration = -2.0,     # max braking deceleration [m/s²]
-
-            mu = 2.0                   # tire-road friction coefficient [-]
-        )
+@hydra.main(version_base=None, config_path="../configs", config_name="config")
+def main(cfg: DictConfig):
     
+    # 1. Load vehicle parameters 
+    vehicle = VehicleParameters(
+        max_steer=cfg.vehicle.max_steer,
+        max_steer_rate=cfg.vehicle.max_steer_rate,
+
+        Lf=cfg.vehicle.lf,                  
+        Lr=cfg.vehicle.lr,                  
+        Iz=cfg.vehicle.Iz,
+
+        wheel_length=cfg.vehicle.wheel_length,
+        wheel_width=cfg.vehicle.wheel_width,
+
+        wheel_base=cfg.vehicle.wheel_base,
+        track=cfg.vehicle.track,
+
+        width=cfg.vehicle.width,
+        length=cfg.vehicle.length,
+        rear_to_wheel=cfg.vehicle.rear_to_wheel,
+
+        m=cfg.vehicle.m,
+
+        Cf=cfg.vehicle.Cf,
+        Cr=cfg.vehicle.Cr,
+
+        max_acceleration=cfg.vehicle.max_acceleration,
+        max_deceleration=cfg.vehicle.max_deceleration,
+
+        mu=cfg.vehicle.mu
+    )
     
     
     #res = get_steering_angle_range(velocity=4, steering_angle=0.2, vehicle_params=vehicle, max_a_lat=3, internal_dt=100)
@@ -473,15 +447,11 @@ def main():
 
 
     ## Benchmarking
-    t  = timeit.timeit(lambda: _get_acceleration_range(velocity = 55.55,
+    t  = timeit.timeit(lambda: _get_acceleration_range(
+                           velocity = 55.55,
                            velocity_limit = 13.88,
-                           velocity_limit_tolerance = 0.55,
-                           velocity_limit_thresh = 0.55,
                            acceleration = 1.8,
-                           acceleration_limit = 2,
-                           deceleration_limit = -2,
-                           positiv_jerk_limit = 1,
-                           negativ_jerk_limit = -2,
+                           mp_cfg = cfg.motion_primitives,
                            internal_dt = 100),
                            number=100)
     print(f"Average time: {(t/10000)*1000:.6f} ms")
@@ -502,17 +472,9 @@ def main():
     res = get_motion_primitives(velocity=55.55,
                                 steering_angle=0.7,
                                 vehicle_params=vehicle,
-                                acceleration_split=[0,25,50,75,100],
-                                steering_angle_split=[-100,-50,-25,0,25,50,100],
-                                max_a_lat=3,
                                 velocity_limit=60,
-                                velocity_limit_tolerance=0.55,
-                                velocity_limit_thresh=0.55,
                                 acceleration=0,
-                                acceleration_limit=2,
-                                deceleration_limit=-2,
-                                positiv_jerk_limit=1,
-                                negativ_jerk_limit=-1,
+                                mp_cfg=cfg.motion_primitives,
                                 internal_dt=100)
     
     print_motion_primitives(res)
@@ -521,25 +483,16 @@ def main():
     t  = timeit.timeit(lambda: get_motion_primitives(velocity=5,
                                                     steering_angle=0,
                                                     vehicle_params=vehicle,
-                                                    acceleration_split={0,25,50,75,100},
-                                                    steering_angle_split={-100,-50,-25,0,25,50,100},
-                                                    max_a_lat=3,
                                                     velocity_limit=13.88,
-                                                    velocity_limit_tolerance=0.55,
-                                                    velocity_limit_thresh=0.55,
                                                     acceleration=0,
-                                                    acceleration_limit=2,
-                                                    deceleration_limit=-2,
-                                                    positiv_jerk_limit=1,
-                                                    negativ_jerk_limit=-1,
+                                                    mp_cfg=cfg.motion_primitives,
                                                     internal_dt=100),
                                                     number = 1000)
     
     print(f"Average time: {(t/1000)*1000:.6f} ms")
 
+
                                                                             
-
-
 
 if __name__ == "__main__":
     main()
