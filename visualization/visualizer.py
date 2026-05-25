@@ -122,18 +122,22 @@ def _draw_objects(ax, env) -> None:
 
 def _draw_ego(ax, ego, vehicle_params) -> None:
     """
-    Draw the ego vehicle as an oriented bounding box (blue)
-    with a heading arrow showing the current yaw direction.
+    Draw the ego vehicle assuming ego_state.pos is the rear axle center.
     """
     if ego is None or vehicle_params is None:
         return
 
     ego_state = _get_ego_state(ego)
 
+    # Shift from rear axle center to geometric center of the vehicle body
+    center_offset = vehicle_params.length / 2 - vehicle_params.rear_to_wheel
+    x_center = ego_state.pos.x + center_offset * math.cos(ego_state.yaw)
+    y_center = ego_state.pos.y + center_offset * math.sin(ego_state.yaw)
+
     _draw_box(
         ax=ax,
-        x=ego_state.pos.x,
-        y=ego_state.pos.y,
+        x=x_center,
+        y=y_center,
         yaw=ego_state.yaw,
         length=vehicle_params.length,
         width=vehicle_params.width,
@@ -141,13 +145,16 @@ def _draw_ego(ax, ego, vehicle_params) -> None:
         label="Ego",
     )
 
-    # heading arrow: length scaled from vehicle size, minimum 0.5 m
+    # Draw rear axle reference point
+    ax.scatter(ego_state.pos.x, ego_state.pos.y, color="cyan", s=25, zorder=6)
+
+    # Heading arrow starts at rear axle center
     arrow_len = max(vehicle_params.length * 0.6, 0.5)
     ax.arrow(
         ego_state.pos.x,
         ego_state.pos.y,
-        arrow_len * math.cos(ego_state.yaw),  # x-component of heading vector
-        arrow_len * math.sin(ego_state.yaw),  # y-component of heading vector
+        arrow_len * math.cos(ego_state.yaw),
+        arrow_len * math.sin(ego_state.yaw),
         head_width=max(vehicle_params.width * 0.2, 0.15),
         length_includes_head=True,
         color="blue",
