@@ -22,10 +22,12 @@ def calculate_total_cost(
     path_cost: float, 
     node_cost: float, 
     heuristic_cost: float, 
+    detailed_costs: Dict[str, float],
     cost_cfg: DictConfig
-) -> float:
+) -> Tuple[float, Dict[str, float]]:
     """
-    Calculates the total weighted cost f(n) for a node in the A* search.
+    Calculates the total weighted cost f(n) for a node in the A* search and 
+    updates the detailed cost breakdown with the heuristic value.
 
     The function combines the accumulated path cost from the parent, 
     the transition cost to the current node, and the estimated heuristic 
@@ -35,20 +37,29 @@ def calculate_total_cost(
         path_cost (float): The accumulated transition cost from the root to the parent node.
         node_cost (float): The specific transition cost from the parent to the current node.
         heuristic_cost (float): The estimated distance/cost from the current node to the goal.
-        cfg (DictConfig): Hydra configuration object containing the search weights 
-                          (expected to have `cfg.search.w_g` and `cfg.search.w_h`).
+        detailed_costs (Dict[str, float]): The dictionary containing the breakdown of the node_cost.
+        cost_cfg (DictConfig): Hydra configuration object containing the search weights 
+                               (expected to have `cost_cfg.search.w_g` and `cost_cfg.search.w_h`).
 
     Returns:
-        float: The total weighted cost f(n) used to prioritize nodes in the open set.
+        Tuple[float, Dict[str, float]]: 
+            - The total weighted cost f(n) used to prioritize nodes in the open set.
+            - The updated detailed_costs dictionary including the weighted heuristic.
     """
     
     # g(n): Total accumulated cost to reach the current node
     g_cost = path_cost + node_cost
     
-    # f(n) = w_g * g(n) + w_h * h(n)
-    total_cost = (cost_cfg.search.w_g * g_cost) + (cost_cfg.search.w_h * heuristic_cost)
+    # Calculate the weighted heuristic
+    weighted_heuristic = cost_cfg.search.w_h * heuristic_cost
     
-    return total_cost
+    # Add the heuristic to our cost breakdown dictionary
+    detailed_costs["heuristic"] = weighted_heuristic
+    
+    # f(n) = w_g * g(n) + w_h * h(n)
+    total_cost = (cost_cfg.search.w_g * g_cost) + weighted_heuristic
+    
+    return total_cost, detailed_costs
 
 
 def calculate_node_cost(
@@ -56,24 +67,26 @@ def calculate_node_cost(
     curr_state: EgoStateStamped,
     request: PlanningRequest,
     cost_cfg: DictConfig
-) -> float:
+) -> Tuple[float, Dict[str, float]]:
     """
-    Calculates the total weighted cost for a specific state transition.
+    Calculates the total weighted cost for a specific state transition and provides a detailed breakdown.
 
     Args:
         prev_state (EgoStateStamped): The previous state of the ego vehicle.
         curr_state (EgoStateStamped): The current state of the ego vehicle to be evaluated.
         request (PlanningRequest): The planning request containing environment, target speed, and vehicle params.
-        cfg (DictConfig): The Hydra configuration object containing transition weights and function-specific parameters.
+        cost_cfg (DictConfig): The Hydra configuration object containing transition weights and parameters.
 
     Returns:
-        float: The aggregated total cost. Raises ValueError if config is missing.
+        Tuple[float, Dict[str, float]]: 
+            - The aggregated total cost (float).
+            - A dictionary containing the weighted individual cost components for debugging and analysis.
     """
     
     if cost_cfg is None:
         raise ValueError("Hydra configuration (cfg) must be provided.")
         
-    total_cost = 0.0
+    detailed_costs: Dict[str, float] = {}
     
     # Extract the transition weights using OmegaConf dot-notation
     weights = cost_cfg.transition_weights
@@ -82,30 +95,30 @@ def calculate_node_cost(
     # 1. Comfort: Jerk
     # ---------------------------------------------------------
     jerk_costs = cost_jerk(prev_state, curr_state)
-    total_cost += weights.jerk_long * jerk_costs["long"]
-    total_cost += weights.jerk_lat * jerk_costs["lat"]
+    detailed_costs["jerk_long"] = weights.jerk_long * jerk_costs["long"]
+    detailed_costs["jerk_lat"] = weights.jerk_lat * jerk_costs["lat"]
     
     # ---------------------------------------------------------
     # 2. Comfort: Acceleration
     # ---------------------------------------------------------
     accel_costs = cost_acceleration(prev_state, curr_state)
-    total_cost += weights.accel_long * accel_costs["long"]
-    total_cost += weights.accel_lat * accel_costs["lat"]
+    detailed_costs["accel_long"] = weights.accel_long * accel_costs["long"]
+    detailed_costs["accel_lat"] = weights.accel_lat * accel_costs["lat"]
     
     # ---------------------------------------------------------
     # 3. Efficiency: Target Speed
     # ---------------------------------------------------------
-    speed_cost = cost_target_speed_delta(
+    speed_cost_raw = cost_target_speed_delta(
         curr_state=curr_state, 
         target_speed=request.target_speed,
         **cost_cfg.cost_target_speed_delta
     )
-    total_cost += weights.speed * speed_cost
+    detailed_costs["speed"] = weights.speed * speed_cost_raw
     
     # ---------------------------------------------------------
     # 4. Safety: Object Force Fields
     # ---------------------------------------------------------
-    object_cost = cost_objects_force_field(
+    object_cost_raw = cost_objects_force_field(
         current_ego=curr_state,
         previous_ego=prev_state,
         predicted_env=request.environment,
@@ -113,9 +126,15 @@ def calculate_node_cost(
         resolution_ms=request.dt_interpolation,
         **cost_cfg.cost_objects_force_field
     )
-    total_cost += weights.objects * object_cost
+    detailed_costs["objects"] = weights.objects * object_cost_raw
     
-    return total_cost
+    # ---------------------------------------------------------
+    # Aggregation
+    # ---------------------------------------------------------
+    # The total cost is simply the sum of all weighted components in the dictionary
+    total_cost = sum(detailed_costs.values())
+    
+    return total_cost, detailed_costs
 
 
 def calculate_heuristic_cost(state: EgoStateStamped, request: PlanningRequest) -> float:
