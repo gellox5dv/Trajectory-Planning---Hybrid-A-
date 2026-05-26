@@ -12,7 +12,7 @@ class StateNode(NodeMixin):
                  path_cost: float,
                  total_cost: float,
                  detailed_costs: Dict[str, float],
-                 target_region_reached: bool,
+                 goal_region_reached: bool,
                  depth: float,
                  parent: NodeMixin = None,
                  motion_primitive: MotionPrimitive = None):
@@ -24,7 +24,7 @@ class StateNode(NodeMixin):
         self.path_cost = path_cost
         self.total_cost = total_cost
         self.detailed_costs = detailed_costs
-        self.target_region_reached = target_region_reached
+        self.goal_region_reached = goal_region_reached
         self.depth = depth
         self.parent = parent
         self.motion_primitive = motion_primitive
@@ -37,7 +37,7 @@ class StateNode(NodeMixin):
         
         return (
             f"<StateNode(id={self.id}, depth={self.depth})\n"
-            f" ├─ Target Reached : {self.target_region_reached}\n"
+            f" ├─ Target Reached : {self.goal_region_reached}\n"
             f" ├─ Parent ID      : {parent_id}\n"
             f" ├─ Costs          : Total={self.total_cost:.3f} | Path={self.path_cost:.3f} | "
             f"Node={self.node_cost:.3f} | Heuristic={self.heuristic_cost:.3f}\n"
