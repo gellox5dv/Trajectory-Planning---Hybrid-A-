@@ -32,11 +32,17 @@ class StateNode(NodeMixin):
     def __lt__(self, other):
         return self.total_cost < other.total_cost
     
-    def __repr__(self):
+    def __repr__(self) -> str:
+        parent_id = self.parent.id if self.parent is not None else "None"
+        
         return (
-            f"StateNode(id={self.id}, depth={self.depth}, "
-            f"node_cost={self.node_cost:.2f}, "
-            f"f={self.total_cost:.2f}, g={self.path_cost:.2f}, h={self.heuristic_cost:.2f}, "
-            f"target_region_reached={self.target_region_reached})"
+            f"<StateNode(id={self.id}, depth={self.depth})\n"
+            f" ├─ Target Reached : {self.target_region_reached}\n"
+            f" ├─ Parent ID      : {parent_id}\n"
+            f" ├─ Costs          : Total={self.total_cost:.3f} | Path={self.path_cost:.3f} | "
+            f"Node={self.node_cost:.3f} | Heuristic={self.heuristic_cost:.3f}\n"
+            f" ├─ Detailed Costs : {self.detailed_costs}\n"
+            f" ├─ State          : {self.state_stamped}\n"
+            f" └─ Primitive      : {self.motion_primitive}>"
         )
     
