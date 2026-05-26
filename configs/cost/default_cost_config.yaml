@@ -1,0 +1,34 @@
+# ---------------------------------------------------------
+# A* Global Search Weights
+# ---------------------------------------------------------
+search:
+  w_g: 1.0                     # Weight for accumulated path costs (g-cost)
+  w_h: 0.3                     # Weight for heuristic cost (h-cost)
+
+# ---------------------------------------------------------
+# Transition Cost Multipliers 
+# ---------------------------------------------------------
+transition_weights:
+  jerk_long: 1.0               # Multiplier for longitudinal jerk
+  jerk_lat: 1.5                # Multiplier for lateral jerk
+  accel_long: 1.0              # Multiplier for longitudinal acceleration
+  accel_lat: 2.0               # Multiplier for lateral acceleration
+  speed: 1.0                   # Multiplier for the total speed cost
+  objects: 1.0                 # Multiplier for the total object cost
+
+# ---------------------------------------------------------
+# Function-Specific Parameters
+# ---------------------------------------------------------
+cost_target_speed_delta:
+  weight_underspeed: 1.0       # Linear penalty for driving too slow
+  weight_overspeed: 5.0        # Base weight for driving too fast
+  exp_growth_factor: 1.0       # Steepness of the overspeed exponential curve
+  max_penalty: 1000000.0       # Absolute maximum cost limit (1e6)
+
+cost_objects_force_field:
+  ego_safe_margin: 0.5         # Margin to inflate the ego vehicle's bounding box [m]
+  obj_safe_margin: 0.5         # Base margin to inflate dynamic object bounding boxes [m]
+  speed_expansion_factor: 0.4  # Multiplier to extend object force field based on speed [s]
+  weight_ff_high: 50.0         # High penalty weight for intersecting high force field
+  weight_ff_low: 1.0           # Base proximity weight outside the high force field
+  dist_epsilon: 0.1            # Small value to prevent division by zero
