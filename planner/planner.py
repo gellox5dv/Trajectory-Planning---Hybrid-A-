@@ -55,10 +55,10 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
     call_time = time.perf_counter()
 
     # Immediate success check: Is the vehicle already inside the goal region?
-    if is_in_target_region(request.start_state, request.goal_region, cfg.vehicle):
+    if is_in_goal_region(request.start_state, request.goal_region, cfg.vehicle):
         return PlanResult(
             success=False,
-            target_region_reached=None,
+            goal_region_reached=None,
             trajectory=None,
             cost=None,
             status_message='Vehicle is already in the goal region at function call.'
@@ -73,7 +73,7 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
         path_cost=0.0,
         total_cost=0.0,
         detailed_costs=None,
-        target_region_reached=False,
+        goal_region_reached=False,
         depth=0,
         parent=None
     )
@@ -139,7 +139,7 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
             )
 
             # Check if this new state intersects with the goal region
-            target_region_reached = is_in_target_region(curr_state, request.goal_region, cfg.vehicle)
+            goal_region_reached = is_in_goal_region(curr_state, request.goal_region, cfg.vehicle)
 
             # Create the expanded child node
             new_node = StateNode(
@@ -150,14 +150,14 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
                 path_cost=path_cost,
                 total_cost=total_cost,
                 detailed_costs=detailed_costs,
-                target_region_reached=target_region_reached,
+                goal_region_reached=goal_region_reached,
                 depth=prev_node.depth + 1,
                 parent=prev_node,
                 motion_primitive=mp
             )
             
             # Sort the node into the appropriate queue based on termination conditions
-            if not new_node.target_region_reached and new_node.depth < max_depth:
+            if not new_node.goal_region_reached and new_node.depth < max_depth:
                 heapq.heappush(open_nodes_pq, new_node)
             else:
                 # Goal reached or max depth exceeded; consider this an end node
@@ -199,7 +199,7 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
 
         return PlanResult(
             success=True,
-            goal_reached=best_end_node.target_region_reached,
+            goal_region_reached=best_end_node.goal_region_reached,
             trajectory=path,
             cost=best_end_node.total_cost,
             status_message=None
@@ -213,7 +213,7 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
 
         return PlanResult(
             success=False,
-            target_region_reached=None,
+            goal_region_reached=None,
             trajectory=None,
             cost=None,
             status_message=status_message
@@ -241,7 +241,7 @@ from omegaconf import DictConfig
 
 # from models.models import EgoStateStamped, GoalRegion  # Deine Importe
 
-def is_in_target_region(
+def is_in_goal_region(
     state_stamped: EgoStateStamped, 
     goal_region: GoalRegion, 
     veh_cfg: DictConfig
