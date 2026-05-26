@@ -218,7 +218,7 @@ class Trajectory:
 @dataclass
 class PlanResult:
     success: bool                       # True if valid plan found
-    target_region_reached: bool         # True if trajectory reaches target_region
+    goal_region_reached: bool         # True if trajectory reaches goal_region
     
     trajectory: Optional[Trajectory]    # resulting trajectory (None if failed)
     cost: float                         # total trajectory cost
