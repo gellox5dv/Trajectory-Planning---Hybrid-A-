@@ -11,7 +11,7 @@ The system is structured into the following main components:
 * Motion & Prediction (Angelo)
 * Planning (Hybrid A*) (Daniel)
 * Visualization (Diana)
-* Control (MPC)
+* Control (Diana)
 
 Each module is responsible for a clearly defined part of the pipeline and communicates only via the defined interfaces.
 
@@ -369,7 +369,7 @@ def plan(request: PlanningRequest) -> PlanResult:
 
 # Control 
 
-**Responsible: (Diana)**
+**Responsible: Diana**
 
 The control module tracks the planned trajectory and converts it into control inputs.
 
