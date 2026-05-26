@@ -1,21 +1,38 @@
 import math
-from planner.cost_utils import *
+from planner.cost.cost_utils import *
 from models.models import EgoStateStamped
 from shapely.geometry import Polygon
 from collision.collision import get_distance_to_objects
 from models.models import *
 
 
-
-
 #--- Comfort Costs ---------------------------------------------------------------------
 
 def get_dt_seconds(prev_state: EgoStateStamped, curr_state: EgoStateStamped) -> float:
+    """
+    Calculates the time difference between two states in seconds.
+
+    Args:
+        prev_state (EgoStateStamped): The previous state of the ego vehicle.
+        curr_state (EgoStateStamped): The current state of the ego vehicle.
+
+    Returns:
+        float: Time difference in seconds, safely clamped to a minimum of 1e-6 to prevent division by zero.
+    """
     dt = (curr_state.timestamp - prev_state.timestamp) / 1000.0
-    # Prevent division by zero in case of identical timestamps
     return max(dt, 1e-6)
 
 def cost_jerk(prev_state: EgoStateStamped, curr_state: EgoStateStamped):
+    """
+    Calculates the squared jerk costs in the vehicle's local longitudinal and lateral directions.
+
+    Args:
+        prev_state (EgoStateStamped): The previous state of the ego vehicle.
+        curr_state (EgoStateStamped): The current state of the ego vehicle.
+
+    Returns:
+        dict: A dictionary containing the squared jerk costs with keys "long" and "lat".
+    """
     dt = get_dt_seconds(prev_state, curr_state)
     
     # Calculate global jerk via finite differences
@@ -30,16 +47,28 @@ def cost_jerk(prev_state: EgoStateStamped, curr_state: EgoStateStamped):
     jerk_long = jerk_x * cos_y + jerk_y * sin_y
     jerk_lat = -jerk_x * sin_y + jerk_y * cos_y
     
-    # Cost calculation (separated for easy adjustments)
+    # Cost calculation 
     cost_long = jerk_long ** 2
     cost_lat = jerk_lat ** 2
     
     return {"long": cost_long, "lat": cost_lat}
 
-def cost_acceleration(curr_state: EgoStateStamped):
-    # Acceleration is already present in the state, no finite difference needed
-    accel_x = curr_state.state.acceleration.x
-    accel_y = curr_state.state.acceleration.y
+def cost_acceleration(prev_state: EgoStateStamped, curr_state: EgoStateStamped):
+    """
+    Calculates the squared acceleration costs in local longitudinal and lateral directions 
+    using the average acceleration over the time step.
+
+    Args:
+        prev_state (EgoStateStamped): The previous state of the ego vehicle.
+        curr_state (EgoStateStamped): The current state of the ego vehicle.
+
+    Returns:
+        dict: A dictionary containing the squared acceleration costs with keys "long" and "lat".
+    """
+    dt = get_dt_seconds(prev_state, curr_state)
+    
+    accel_x = (curr_state.state.velocity.x - prev_state.state.velocity.x) / dt
+    accel_y = (curr_state.state.velocity.y - prev_state.state.velocity.y) / dt
     
     yaw = curr_state.state.yaw
     cos_y = math.cos(yaw)
@@ -48,7 +77,7 @@ def cost_acceleration(curr_state: EgoStateStamped):
     accel_long = accel_x * cos_y + accel_y * sin_y
     accel_lat = -accel_x * sin_y + accel_y * cos_y
     
-    # Cost calculation (separated for easy adjustments)
+    # Cost calculation
     cost_long = accel_long ** 2
     cost_lat = accel_lat ** 2
     
@@ -65,6 +94,21 @@ def cost_target_speed_delta(
     exp_growth_factor: float = 1.0,      
     max_penalty: float = 1e6             
 ) -> float:
+    """
+    Calculates the cost for deviating from the target speed. Applies a linear penalty 
+    for driving too slow and an exponential penalty barrier for driving too fast.
+
+    Args:
+        curr_state (EgoStateStamped): The current state of the ego vehicle.
+        target_speed (float): The desired target speed [m/s].
+        weight_underspeed (float): Linear weight applied when velocity is below target.
+        weight_overspeed (float): Base weight applied when velocity exceeds target.
+        exp_growth_factor (float): Factor controlling the steepness of the overspeed exponential curve.
+        max_penalty (float): Absolute maximum cost limit to prevent math overflows.
+
+    Returns:
+        float: The calculated penalty cost for speed deviation.
+    """
     
     vx = curr_state.state.velocity.x
     vy = curr_state.state.velocity.y
@@ -83,7 +127,6 @@ def cost_target_speed_delta(
     return min(raw_cost, max_penalty) 
 
 
-
 def cost_objects_force_field(
     current_ego: EgoStateStamped,
     previous_ego: EgoStateStamped,
@@ -97,6 +140,25 @@ def cost_objects_force_field(
     weight_ff_low: float = 1.0,          
     dist_epsilon: float = 0.1
 ) -> float:
+    """
+    Calculates proximity costs to dynamic objects using a dual force-field approach.
+
+    Args:
+        current_ego (EgoStateStamped): The current state of the ego vehicle.
+        previous_ego (EgoStateStamped): The previous state of the ego vehicle (for continuous collision check).
+        predicted_env (PredictedEnvironment): Environment data containing dynamic object predictions.
+        vehicle_params (VehicleParameters): Physical properties of the ego vehicle.
+        resolution_ms (int): Interpolation resolution for the collision checker [ms].
+        ego_safe_margin (float): Margin to inflate the ego vehicle's bounding box [m].
+        obj_safe_margin (float): Base margin to inflate dynamic object bounding boxes [m].
+        speed_expansion_factor (float): Multiplier to dynamically extend the object's force field based on speed [s].
+        weight_ff_high (float): High penalty weight applied when intersecting an object's high force field.
+        weight_ff_low (float): Base proximity weight applied outside the high force field.
+        dist_epsilon (float): Small value to prevent division by zero in distance calculations.
+
+    Returns:
+        float: The maximum calculated proximity cost across all objects, or float('inf') if a hard collision occurs.
+    """
     
     # 1. Get exact distances and check for hard collisions in the current time step
     distances, is_collision = get_distance_to_objects(
@@ -166,8 +228,3 @@ def cost_objects_force_field(
             max_cost = cost
             
     return max_cost
-
-
-
-
-
