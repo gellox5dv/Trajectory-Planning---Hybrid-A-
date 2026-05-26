@@ -62,6 +62,10 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
 
     while True:
         loop_start_time = time.perf_counter()
+
+        if(len(open_nodes_pq) == 0):
+            break
+
         prev_node = heapq.heappop(open_nodes_pq)
         prev_stamped_state = prev_node.state_stamped
 
@@ -69,7 +73,7 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
                                                   steering_angle=prev_stamped_state.state.steering_angle,
                                                   veh_cfg=cfg.vehicle,
                                                   velocity_limit=request.velocity_limit,
-                                                  acceleration=get_magnitude(prev_node),
+                                                  acceleration=get_magnitude(prev_stamped_state.state.acceleration),
                                                   mp_cfg=cfg.motion_primitives)
         
         for mp in motion_primitives:
@@ -103,7 +107,7 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
                                  parent=prev_node,
                                  motion_primitive=mp)
             
-            if(new_node.target_region_reached == False and new_node.depth < max_depth):
+            if(not new_node.target_region_reached and new_node.depth < max_depth):
                 heapq.heappush(open_nodes_pq, new_node)
             else:
                 heapq.heappush(end_nodes_pq, new_node)
@@ -114,29 +118,34 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
         if (loop_stop_time + loop_duration + cfg.planner.extract_path_time > call_time + cfg.planner.max_compute_time) or len(open_nodes_pq) == 0:
             break;
     
-    best_end_note = heapq.heappop(end_nodes_pq)
 
-    success = best_end_note is not None and not math.isinf(best_end_note.total_cost)
+    
+    best_end_node = None
+
+    if(len(end_nodes_pq) is not 0):
+          best_end_node = heapq.heappop(end_nodes_pq)
+
+    success = best_end_node is not None and not math.isinf(best_end_node.total_cost)
 
     
 
     if success:
-        path = extract_path_stamped_states(best_end_note)
+        path = extract_path_stamped_states(best_end_node)
 
         rescaling_factor = cfg.planner.dt_output / cfg.planner.dt_sim
 
         path = path[::rescaling_factor]
 
         plan_result = PlanResult(success=True,
-                                 goal_reached=best_end_note.target_region_reached,
+                                 goal_reached=best_end_node.target_region_reached,
                                  trajectory=path,
-                                 cost=best_end_note.total_cost,
+                                 cost=best_end_node.total_cost,
                                  status_message=None)
     
     else:
-        status_message = f"End Node reached: {best_end_note is not None}"
-        if(best_end_note is not None):
-            status_message += best_end_note.__repr__()
+        status_message = f"End Node reached: {best_end_node is not None}"
+        if(best_end_node is not None):
+            status_message += best_end_node.__repr__()
 
         plan_result = PlanResult(success=False,
                                  target_region_reached=None,
@@ -158,7 +167,7 @@ def extract_path_stamped_states(end_node: StateNode) -> List[EgoStateStamped]:
         path.append(node.state_stamped)
         node = node.parent
 
-    path = path.reverse()
+    path.reverse()
     return path
 
 
