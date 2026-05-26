@@ -369,7 +369,7 @@ def plan(request: PlanningRequest) -> PlanResult:
 
 # Control 
 
-**Responsible: (TBD)**
+**Responsible: (Diana)**
 
 The control module tracks the planned trajectory and converts it into control inputs.
 

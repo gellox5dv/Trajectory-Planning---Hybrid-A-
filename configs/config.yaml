@@ -1,0 +1,5 @@
+defaults:
+  - cost: default_cost_config    
+  - motion_primitives: default_motion_primitives_conig 
+  - planner: default_planner_config
+  - vehicle: renault_twizy       

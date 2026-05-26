@@ -1,7 +1,8 @@
-from math import cos, pi, sin
+from math import cos, pi, sin, hypot
 from typing import List, Optional, Tuple
 from configparser import ConfigParser
-from models.models import Vector2D, VehicleParameters
+from models.models import Vector2D, VehicleParameters, EgoStateStamped
+import copy
 
 
 def global_to_ego_axis(poi_x: float, poi_y: float, ego_x: float, ego_y: float, ego_yaw: float, poi_yaw: Optional[float] = None) -> Tuple[float, float, Optional[float]]:
@@ -87,3 +88,52 @@ def load_vehicle_parameters() -> VehicleParameters:
         max_deceleration = config.getfloat('vehicle', 'max_deceleration'),
         mu = config.getfloat('vehicle', 'mu')
     )
+
+def get_magnitude(vector: Vector2D) -> float:
+    return hypot(vector.x, vector.y)
+
+
+def shift_rear_axle_to_cg(state_stamped: EgoStateStamped, lr: float) -> EgoStateStamped:
+    """
+    Shifts the vehicle's position from the center of the rear axle to the center of gravity (CG).
+    
+    Args:
+        state_stamped (EgoStateStamped): The original state referenced at the rear axle.
+        lr (float): The distance from the rear axle to the center of gravity [m].
+        
+    Returns:
+        EgoStateStamped: A new state object with the position shifted to the CG.
+    """
+    # Create a deep copy to avoid modifying the original object in memory
+    new_stamped = copy.deepcopy(state_stamped)
+    
+    yaw = new_stamped.state.yaw
+    
+    # Shift forward along the vehicle's longitudinal axis
+    new_stamped.state.pos.x += lr * cos(yaw)
+    new_stamped.state.pos.y += lr * sin(yaw)
+    
+    return new_stamped
+
+
+def shift_cg_to_rear_axle(state_stamped: EgoStateStamped, lr: float) -> EgoStateStamped:
+    """
+    Shifts the vehicle's position from the center of gravity (CG) back to the center of the rear axle.
+    
+    Args:
+        state_stamped (EgoStateStamped): The original state referenced at the CG.
+        lr (float): The distance from the rear axle to the center of gravity [m].
+        
+    Returns:
+        EgoStateStamped: A new state object with the position shifted to the rear axle.
+    """
+    # Create a deep copy to avoid modifying the original object in memory
+    new_stamped = copy.deepcopy(state_stamped)
+    
+    yaw = new_stamped.state.yaw
+    
+    # Shift backward along the vehicle's longitudinal axis
+    new_stamped.state.pos.x -= lr * cos(yaw)
+    new_stamped.state.pos.y -= lr * sin(yaw)
+    
+    return new_stamped
