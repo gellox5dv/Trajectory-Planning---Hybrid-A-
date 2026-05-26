@@ -12,10 +12,10 @@ from omegaconf import DictConfig, OmegaConf
 class MotionPrimitive:
     steering_angle: float       # steering input δ [rad]
     acceleration: float         # longitudinal acceleration [m/s²]  
-    dt:int                      # the time the MotionPrimitive is used
+    dt: int                     # the time the MotionPrimitive is used
 
 
-def _get_max_steering_angle(velocity: float, params: VehicleParameters, mp_cfg: DictConfig) -> float:
+def _get_max_steering_angle(velocity: float, veh_cfg: DictConfig, mp_cfg: DictConfig) -> float:
     """
     Compute the maximum feasible steering angle (in radians) based on a lateral
     acceleration constraint using a simplified kinematic bicycle model.
@@ -27,18 +27,19 @@ def _get_max_steering_angle(velocity: float, params: VehicleParameters, mp_cfg: 
         delta = arctan((a_lat * L) / v^2)
 
     The resulting steering angle is additionally limited by the vehicle's
-    physical maximum steering angle (params.max_steer).
+    physical maximum steering angle (veh_cfg.max_steer).
 
     Parameters
     ----------
     velocity : float
         Vehicle speed in meters per second (m/s). Must be > 0.
-    params : VehicleParameters
-        Vehicle parameter object containing at least:
-        - L: wheelbase [m]
+    veh_cfg : DictConfig
+        Configuration object containing vehicle dimensions and limits:
+        - wheel_base: wheelbase [m]
         - max_steer: maximum steering angle [rad]
     mp_cfg : DictConfig
-        Configuration object containing max_a_lat: Maximum allowable lateral acceleration in meters per second squared (m/s²).
+        Configuration object containing:
+        - max_a_lat: Maximum allowable lateral acceleration in meters per second squared (m/s²).
 
     Returns
     -------
@@ -48,16 +49,16 @@ def _get_max_steering_angle(velocity: float, params: VehicleParameters, mp_cfg: 
     """
     # If moving very slowly, the lateral acceleration constraint is irrelevant.
     if abs(velocity) < 0.1: 
-        return params.max_steer
+        return veh_cfg.max_steer
     
     # Compute steering angle using the rearranged bicycle model formula
-    res =  np.arctan((mp_cfg.max_a_lat*params.wheel_base)/np.square(velocity))
-    return min(res, params.max_steer)
+    res =  np.arctan((mp_cfg.max_a_lat * veh_cfg.wheel_base) / np.square(velocity))
+    return min(res, veh_cfg.max_steer)
 
 
 def _get_steering_angle_range(velocity: float,
                              steering_angle: float,
-                             vehicle_params: VehicleParameters,
+                             veh_cfg: DictConfig,
                              mp_cfg: DictConfig,
                              internal_dt: int) -> tuple[float, float]: 
     """
@@ -70,10 +71,14 @@ def _get_steering_angle_range(velocity: float,
         Current vehicle speed in m/s.
     steering_angle : float
         Current Steering angle in radians.
-    vehicle_params : VehicleParameters
-        Vehicle constants (wheelbase, max steer, max steer rate).
+    veh_cfg : DictConfig
+        Configuration object containing vehicle constants:
+        - wheel_base: wheelbase [m]
+        - max_steer: maximum physical steering angle [rad]
+        - max_steer_rate: maximum steering rate [rad/s]
     mp_cfg : DictConfig
-        Configuration object containing max_a_lat: Maximum allowable lateral acceleration in m/s².
+        Configuration object containing:
+        - max_a_lat: Maximum allowable lateral acceleration in m/s².
     internal_dt : int
         Time step duration in milliseconds (ms).
 
@@ -84,14 +89,14 @@ def _get_steering_angle_range(velocity: float,
     """
     
     # 1. Physical Sanity Check
-    if abs(steering_angle) > vehicle_params.max_steer:
-        raise ValueError("Steering Angle exceeds VehicleParameters limits")
+    if abs(steering_angle) > veh_cfg.max_steer:
+        raise ValueError("Steering Angle exceeds Vehicle limits (max_steer)")
     
     # 2. Safety & Mechanical: Get max angle allowed by lateral acceleration or physical stop
-    max_steering_angle_global = _get_max_steering_angle(velocity, vehicle_params, mp_cfg)
+    max_steering_angle_global = _get_max_steering_angle(velocity, veh_cfg, mp_cfg)
 
     # 3. Dynamic: Max steering travel possible within the time step (dt)
-    max_steering_delta = vehicle_params.max_steer_rate * (internal_dt / 1000)
+    max_steering_delta = veh_cfg.max_steer_rate * (internal_dt / 1000)
     min_steering_angle_local = steering_angle - max_steering_delta
     max_steering_angle_local = steering_angle + max_steering_delta
 
@@ -144,7 +149,7 @@ def _get_acceleration_range(velocity: float,
         Feasible (min_acceleration, max_acceleration) range in m/s² for the next time step.
     """
     #Conversion from milliseconds to seconds
-    internal_dt_sec = internal_dt/1000.0
+    internal_dt_sec = internal_dt / 1000.0
 
     # Prevent Division by Zero if internal_dt is strictly 0 (failsafe)
     if internal_dt_sec <= 0.0:
@@ -233,7 +238,7 @@ def _get_acceleration_range(velocity: float,
 
 def get_motion_primitives(velocity: float,
                           steering_angle: float,
-                          vehicle_params: VehicleParameters,
+                          veh_cfg: DictConfig,
                           velocity_limit: float,
                           acceleration: float,
                           mp_cfg: DictConfig,
@@ -248,8 +253,9 @@ def get_motion_primitives(velocity: float,
         Current vehicle speed in m/s.
     steering_angle : float
         Current steering angle in radians.
-    vehicle_params : VehicleParameters
-        Data class containing physical vehicle dimensions and constraints.
+    veh_cfg : DictConfig
+        Configuration object containing physical vehicle dimensions and constraints 
+        (e.g., max_steer, wheel_base).
     velocity_limit : float
         The target maximum speed limit in m/s.
     acceleration : float
@@ -316,7 +322,7 @@ def get_motion_primitives(velocity: float,
         min_angle, max_angle = _get_steering_angle_range(
             velocity = target_velocity,
             steering_angle = steering_angle,
-            vehicle_params = vehicle_params,
+            veh_cfg = veh_cfg,
             mp_cfg = mp_cfg,
             internal_dt = internal_dt
         )
@@ -350,8 +356,6 @@ def get_motion_primitives(velocity: float,
                     dt = internal_dt
                 )
                 motion_primitives.append(motion_primitive)
-
-   
 
     # Sort primitives to optimize A* expansion (straight and constant speed first):
     # 1. Absolute steering magnitude (closest to 0 straight ahead first).
@@ -396,57 +400,10 @@ def print_motion_primitives(primitives: list[MotionPrimitive]) -> None:
     
     
 
-
-
-
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     
-    # 1. Load vehicle parameters 
-    vehicle = VehicleParameters(
-        max_steer=cfg.vehicle.max_steer,
-        max_steer_rate=cfg.vehicle.max_steer_rate,
-
-        Lf=cfg.vehicle.lf,                  
-        Lr=cfg.vehicle.lr,                  
-        Iz=cfg.vehicle.Iz,
-
-        wheel_length=cfg.vehicle.wheel_length,
-        wheel_width=cfg.vehicle.wheel_width,
-
-        wheel_base=cfg.vehicle.wheel_base,
-        track=cfg.vehicle.track,
-
-        width=cfg.vehicle.width,
-        length=cfg.vehicle.length,
-        rear_to_wheel=cfg.vehicle.rear_to_wheel,
-
-        m=cfg.vehicle.m,
-
-        Cf=cfg.vehicle.Cf,
-        Cr=cfg.vehicle.Cr,
-
-        max_acceleration=cfg.vehicle.max_acceleration,
-        max_deceleration=cfg.vehicle.max_deceleration,
-
-        mu=cfg.vehicle.mu
-    )
-    
-    
-    #res = get_steering_angle_range(velocity=4, steering_angle=0.2, vehicle_params=vehicle, max_a_lat=3, internal_dt=100)
-    #print(res)
-#
-#
-    #res = get_max_steering_angle(velocity=4, max_a_lat=3, params=vehicle)
-    #print(res)
-#
-    ## Benchmarking
-    #t  = timeit.timeit(lambda: get_steering_angle_range(velocity=100, steering_angle=0.7, vehicle_params=vehicle, max_a_lat=3, internal_dt=100), number=10000)
-    #print(f"Average time: {(t/10000)*1000:.6f} ms")
-
-
-
-    ## Benchmarking
+    ## Benchmarking Acceleration Range
     t  = timeit.timeit(lambda: _get_acceleration_range(
                            velocity = 55.55,
                            velocity_limit = 13.88,
@@ -454,24 +411,12 @@ def main(cfg: DictConfig):
                            mp_cfg = cfg.motion_primitives,
                            internal_dt = 100),
                            number=100)
-    print(f"Average time: {(t/10000)*1000:.6f} ms")
+    print(f"Average time (_get_acceleration_range): {(t/100) * 1000:.6f} ms")
     
-
-    #res = get_acceleration_range(velocity = 10,
-    #                       velocity_limit = 13.88,
-    #                       velocity_limit_tolerance = 0.55,
-    #                       velocity_limit_thresh = 0.55,
-    #                       acceleration = -1,
-    #                       acceleration_limit = 2,
-    #                       deceleration_limit = -2,
-    #                       positiv_jerk_limit = 1,
-    #                       negativ_jerk_limit = -2,
-    #                       internal_dt = 100)
-    #print(res)
-
+    # Get and print primitives
     res = get_motion_primitives(velocity=55.55,
                                 steering_angle=0.7,
-                                vehicle_params=vehicle,
+                                veh_cfg=cfg.vehicle,        
                                 velocity_limit=60,
                                 acceleration=0,
                                 mp_cfg=cfg.motion_primitives,
@@ -479,20 +424,18 @@ def main(cfg: DictConfig):
     
     print_motion_primitives(res)
 
-
+    ## Benchmarking get_motion_primitives
     t  = timeit.timeit(lambda: get_motion_primitives(velocity=5,
                                                     steering_angle=0,
-                                                    vehicle_params=vehicle,
+                                                    veh_cfg=cfg.vehicle,    
                                                     velocity_limit=13.88,
                                                     acceleration=0,
                                                     mp_cfg=cfg.motion_primitives,
                                                     internal_dt=100),
                                                     number = 1000)
     
-    print(f"Average time: {(t/1000)*1000:.6f} ms")
+    print(f"Average time (get_motion_primitives): {(t/1000) * 1000:.6f} ms")
 
-
-                                                                            
 
 if __name__ == "__main__":
     main()
