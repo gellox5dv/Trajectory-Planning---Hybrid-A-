@@ -5,7 +5,12 @@ from models.models import PlanningRequest, GoalRegion, Vector2D, Trajectory, Pre
 from utils.helper import load_vehicle_parameters
 from motion.motion_prediction import predict_motion_constant_velocity
 
-def main():
+import hydra
+from omegaconf import DictConfig
+
+
+@hydra.main(version_base=None, config_path="configs", config_name="config")
+def main(cfg: DictConfig):
     sim = Simulation()
 
     goal_region = GoalRegion(
@@ -43,7 +48,7 @@ def main():
             environment= pred_env,
             horizon=HORIZON,
             dt=DT,
-            output_dt=DT,
+            dt_output=DT,
             max_compute_time=200
         )
 
