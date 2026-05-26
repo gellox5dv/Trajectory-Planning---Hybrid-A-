@@ -53,9 +53,12 @@ class VehicleParameters:
 
 @dataclass
 class EgoState:
-    pos: Vector2D               # position (x, y) [m]
-    yaw: float                  # heading angle [rad]
-    velocity: float             # forward velocity [m/s]
+    pos: Vector2D               # position (x, y) in global coordinate system [m]
+    velocity: Vector2D          # velocity (x,y) in global coordinate system [m/s]
+    acceleration: Vector2D      # acceleration (x,y) in global coordinate system [m/s]
+    yaw: float                  # heading angle in global coordinate system [rad]
+    steering_angle: float       # angle of the wheels [rad]
+    
 
 
 @dataclass
@@ -196,16 +199,11 @@ class PlanningRequest:
     start_state: EgoStateStamped   # initial state for planning 
 
     goal_region: GoalRegion     # target region
+    target_speed: float         # target speed
+    velocity_limit:float
 
     vehicle_params: VehicleParameters
     environment: PredictedEnvironment
-
-    horizon: int                # planning horizon [ms]
-
-    dt: int                     # internal integration step [ms]
-    output_dt: int              # output resolution (multiple of dt) [ms]
-
-    max_compute_time: int       # time budget [ms]
 
 
 # ============================================================
@@ -220,7 +218,7 @@ class Trajectory:
 @dataclass
 class PlanResult:
     success: bool                       # True if valid plan found
-    goal_reached: bool                  # True if trajectory reaches goal region
+    target_region_reached: bool         # True if trajectory reaches target_region
     
     trajectory: Optional[Trajectory]    # resulting trajectory (None if failed)
     cost: float                         # total trajectory cost
