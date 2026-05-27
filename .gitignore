@@ -1,3 +1,4 @@
 # Hydra Outputs
 outputs/
 multirun/
+*.pyc
