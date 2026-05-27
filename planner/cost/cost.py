@@ -2,6 +2,7 @@ from models.models import *
 from planner.cost.transition_cost import *
 from planner.cost.dubins_path_planner import get_dubins_path_length
 from planner.motion_primitives import _get_max_steering_angle
+from collision.collision import get_ego_lane_info
 
 import unittest
 from unittest.mock import patch
@@ -15,7 +16,6 @@ from planner.cost.transition_cost import (
     cost_target_speed_delta,
     cost_objects_force_field
 )
-
 
 
 def calculate_total_cost(
@@ -66,7 +66,8 @@ def calculate_node_cost(
     prev_state: EgoStateStamped, 
     curr_state: EgoStateStamped,
     request: PlanningRequest,
-    cost_cfg: DictConfig
+    cost_cfg: DictConfig,
+    veh_cfg: DictConfig
 ) -> Tuple[float, Dict[str, float]]:
     """
     Calculates the total weighted cost for a specific state transition and provides a detailed breakdown.
@@ -74,8 +75,9 @@ def calculate_node_cost(
     Args:
         prev_state (EgoStateStamped): The previous state of the ego vehicle.
         curr_state (EgoStateStamped): The current state of the ego vehicle to be evaluated.
-        request (PlanningRequest): The planning request containing environment, target speed, and vehicle params.
+        request (PlanningRequest): The planning request containing environment and target speed.
         cost_cfg (DictConfig): The Hydra configuration object containing transition weights and parameters.
+        veh_cfg (DictConfig): The Hydra configuration object containing vehicle dimensions and limits.
 
     Returns:
         Tuple[float, Dict[str, float]]: 
@@ -122,11 +124,37 @@ def calculate_node_cost(
         current_ego=curr_state,
         previous_ego=prev_state,
         predicted_env=request.environment,
-        vehicle_params=request.vehicle_params,
+        veh_cfg=veh_cfg,
         resolution_ms=request.dt_interpolation,
         **cost_cfg.cost_objects_force_field
     )
     detailed_costs["objects"] = weights.objects * object_cost_raw
+    
+    # ---------------------------------------------------------
+    # 5. Safety & Compliance: Lane Keeping
+    # ---------------------------------------------------------
+    lane_id, dist_to_center, yaw_offset, occlusion, is_opposite = get_ego_lane_info(
+        ego_state=curr_state.state,
+        vehicle_cfg=veh_cfg,
+        lanes=request.environment.lanes
+    )
+    
+    raw_cost_center = cost_lane_center_distance(dist_to_center)
+    raw_cost_yaw = cost_lane_yaw_offset(yaw_offset)
+    
+    raw_cost_occ = cost_lane_occlusion(
+        lane_occlusion=occlusion, 
+        **cost_cfg.cost_lane_occlusion
+    )
+    raw_cost_opp = cost_opposite_lane(
+        opposite_lane=is_opposite, 
+        **cost_cfg.cost_opposite_lane
+    )
+    
+    detailed_costs["lane_center"] = weights.lane_center * raw_cost_center
+    detailed_costs["lane_yaw"] = weights.lane_yaw * raw_cost_yaw
+    detailed_costs["lane_occlusion"] = weights.lane_occlusion * raw_cost_occ
+    detailed_costs["opposite_lane"] = weights.opposite_lane * raw_cost_opp
     
     # ---------------------------------------------------------
     # Aggregation
@@ -137,14 +165,20 @@ def calculate_node_cost(
     return total_cost, detailed_costs
 
 
-def calculate_heuristic_cost(state: EgoStateStamped, request: PlanningRequest) -> float:
+def calculate_heuristic_cost(
+    state: EgoStateStamped, 
+    request: PlanningRequest, 
+    veh_cfg: DictConfig, 
+    max_a_lat: float
+) -> float:
     """
     Calculates the heuristic cost from a given state to the goal region using a Dubins path.
 
     Args:
         state (EgoStateStamped): The starting state for the heuristic calculation.
-        request (PlanningRequest): The planning request containing the goal region, maximum lateral 
-                                   acceleration (max_a_lat), and vehicle parameters.
+        request (PlanningRequest): The planning request containing the goal region.
+        veh_cfg (DictConfig): The Hydra configuration object containing vehicle dimensions and limits.
+        max_a_lat (float): The maximum allowable lateral acceleration [m/s^2].
 
     Returns:
         float: The estimated distance (Dubins path length) to the goal region.
@@ -154,10 +188,10 @@ def calculate_heuristic_cost(state: EgoStateStamped, request: PlanningRequest) -
     current_speed = math.hypot(state.state.velocity.x, state.state.velocity.y)
 
     # 2. Get max steer angle for this specific speed
-    max_steer = _get_max_steering_angle(current_speed, request.max_a_lat, request.vehicle_params)
+    max_steer = _get_max_steering_angle(current_speed, max_a_lat, veh_cfg)
     
     # 3. Calculate curvature using the WHEELBASE, not the total length
-    curvature = math.tan(max_steer) / request.vehicle_params.wheel_base
+    curvature = math.tan(max_steer) / veh_cfg.wheel_base
 
     # 4. Compute Dubins path length
     length = get_dubins_path_length(
@@ -171,8 +205,3 @@ def calculate_heuristic_cost(state: EgoStateStamped, request: PlanningRequest) -
     )
 
     return length
-
-
-
-
-
