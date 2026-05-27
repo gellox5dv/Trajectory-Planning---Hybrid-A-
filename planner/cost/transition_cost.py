@@ -4,6 +4,8 @@ from models.models import EgoStateStamped
 from shapely.geometry import Polygon
 from collision.collision import get_distance_to_objects
 from models.models import *
+from omegaconf import DictConfig
+from utils.helper import get_magnitude
 
 
 #--- Comfort Costs ---------------------------------------------------------------------
@@ -110,9 +112,7 @@ def cost_target_speed_delta(
         float: The calculated penalty cost for speed deviation.
     """
     
-    vx = curr_state.state.velocity.x
-    vy = curr_state.state.velocity.y
-    current_speed = math.hypot(vx, vy)
+    current_speed = get_magnitude(curr_state.state.velocity)
     
     delta_v = current_speed - target_speed
     
@@ -127,31 +127,35 @@ def cost_target_speed_delta(
     return min(raw_cost, max_penalty) 
 
 
+
 def cost_objects_force_field(
     current_ego: EgoStateStamped,
     previous_ego: EgoStateStamped,
     predicted_env: PredictedEnvironment,
-    vehicle_params: VehicleParameters,
+    veh_cfg: DictConfig,
     resolution_ms: int,
     ego_safe_margin: float = 0.5,        
     obj_safe_margin: float = 0.5,        
-    speed_expansion_factor: float = 0.4, 
+    speed_expansion_factor_front: float = 0.4,
+    speed_expansion_factor_rear: float = 0.2,
     weight_ff_high: float = 50.0,        
     weight_ff_low: float = 1.0,          
     dist_epsilon: float = 0.1
 ) -> float:
     """
-    Calculates proximity costs to dynamic objects using a dual force-field approach.
+    Calculates proximity costs to dynamic objects using an asymmetrical dual force-field approach.
+    The force field dynamically expands differently to the front and rear based on the object's speed.
 
     Args:
         current_ego (EgoStateStamped): The current state of the ego vehicle.
         previous_ego (EgoStateStamped): The previous state of the ego vehicle (for continuous collision check).
         predicted_env (PredictedEnvironment): Environment data containing dynamic object predictions.
-        vehicle_params (VehicleParameters): Physical properties of the ego vehicle.
+        veh_cfg (DictConfig): Hydra configuration object containing the ego vehicle's dimensions.
         resolution_ms (int): Interpolation resolution for the collision checker [ms].
         ego_safe_margin (float): Margin to inflate the ego vehicle's bounding box [m].
         obj_safe_margin (float): Base margin to inflate dynamic object bounding boxes [m].
-        speed_expansion_factor (float): Multiplier to dynamically extend the object's force field based on speed [s].
+        speed_expansion_factor_front (float): Multiplier to dynamically extend the object's force field to the front based on speed [s].
+        speed_expansion_factor_rear (float): Multiplier to dynamically extend the object's force field to the rear based on speed [s].
         weight_ff_high (float): High penalty weight applied when intersecting an object's high force field.
         weight_ff_low (float): Base proximity weight applied outside the high force field.
         dist_epsilon (float): Small value to prevent division by zero in distance calculations.
@@ -161,8 +165,9 @@ def cost_objects_force_field(
     """
     
     # 1. Get exact distances and check for hard collisions in the current time step
+    #TODO change function head for veh_cfg
     distances, is_collision = get_distance_to_objects(
-        current_ego, previous_ego, predicted_env, vehicle_params, resolution_ms
+        current_ego, previous_ego, predicted_env, veh_cfg, resolution_ms
     )
     
     if is_collision:
@@ -175,14 +180,14 @@ def cost_objects_force_field(
     ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(current_ego)
     
     # Shift reference point from rear axle to the geometric center
-    ego_x_center = ego_x + (vehicle_params.length / 2 - vehicle_params.rear_to_wheel) * math.cos(ego_yaw)
-    ego_y_center = ego_y + (vehicle_params.length / 2 - vehicle_params.rear_to_wheel) * math.sin(ego_yaw)
+    ego_x_center = ego_x + (veh_cfg.length / 2 - veh_cfg.rear_to_wheel) * math.cos(ego_yaw)
+    ego_y_center = ego_y + (veh_cfg.length / 2 - veh_cfg.rear_to_wheel) * math.sin(ego_yaw)
     
     # Inflate the ego bounding box by the safety margin
     ego_corners = get_bbox_corners(
         ego_x_center, ego_y_center, ego_yaw,
-        vehicle_params.length + 2 * ego_safe_margin,
-        vehicle_params.width + 2 * ego_safe_margin
+        veh_cfg.length + 2 * ego_safe_margin,
+        veh_cfg.width + 2 * ego_safe_margin
     )
     ego_safe_polygon = Polygon([(c.x, c.y) for c in ego_corners])
 
@@ -201,30 +206,95 @@ def cost_objects_force_field(
                 current_obj_state = state
                 break
 
-        # Extract object coordinates directly (since get_x_y_yaw is ego-only)
+        # Extract object coordinates
         obj_x = current_obj_state.state.pos.x
         obj_y = current_obj_state.state.pos.y
         obj_yaw = current_obj_state.state.yaw
         obj_speed = abs(current_obj_state.state.velocity)
         
-        # 4. Construct the Object's "Force Field High"
-        # The longitudinal length expands dynamically based on the object's speed
-        ff_high_length = current_obj_state.state.length + 2 * obj_safe_margin + (obj_speed * speed_expansion_factor)
+        # 4. Construct the Object's Asymmetrical "Force Field High"
+        # Base dimensions (including static margins)
+        base_length = current_obj_state.state.length + 2 * obj_safe_margin
         ff_high_width = current_obj_state.state.width + 2 * obj_safe_margin
         
-        obj_corners = get_bbox_corners(obj_x, obj_y, obj_yaw, ff_high_length, ff_high_width)
+        # Dynamic expansions based on speed
+        front_expansion = obj_speed * speed_expansion_factor_front
+        rear_expansion = obj_speed * speed_expansion_factor_rear
+        
+        # Total new length of the bounding box
+        ff_high_length = base_length + front_expansion + rear_expansion
+        
+        # Calculate the shift of the geometric center
+        # Since we expand asymmetrically, the center moves forward by half the difference
+        shift_distance = (front_expansion - rear_expansion) / 2.0
+        
+        ff_center_x = obj_x + shift_distance * math.cos(obj_yaw)
+        ff_center_y = obj_y + shift_distance * math.sin(obj_yaw)
+        
+        # Generate bounding box with the new shifted center and total length
+        obj_corners = get_bbox_corners(
+            ff_center_x, ff_center_y, obj_yaw, 
+            ff_high_length, ff_high_width
+        )
         obj_ff_high_polygon = Polygon([(c.x, c.y) for c in obj_corners])
 
-        # 5. Apply Cost Mapping based on Force Field intersection
+        # 5. Apply Cost Mapping
         if ego_safe_polygon.intersects(obj_ff_high_polygon):
-            # Ego's safety area overlaps with object's High Force Field
+            # Overlap with High Force Field
             cost = weight_ff_high / (base_dist + dist_epsilon)
         else:
-            # Ego is outside High Force Field, apply base safety cost (Low Force Field)
+            # Outside High Force Field, apply base safety cost
             cost = weight_ff_low / (base_dist + dist_epsilon)
             
-        # 6. Aggregate by keeping the maximum cost encountered
+        # 6. Aggregate maximum cost
         if cost > max_cost:
             max_cost = cost
             
     return max_cost
+
+
+
+def cost_lane_center_distance(distance_to_center: float) -> float:
+    """
+    Calculates the unweighted proximity cost to the lane center.
+    Uses a quadratic mapping to penalize large deviations aggressively 
+    while allowing slight, smooth deviations.
+    """
+    return distance_to_center ** 2
+
+
+def cost_lane_yaw_offset(yaw_offset: float) -> float:
+    """
+    Calculates the unweighted cost for heading misalignment with the lane.
+    Uses a quadratic mapping to strictly penalize driving crossways to the lane direction.
+    """
+    return yaw_offset ** 2
+
+
+def cost_lane_occlusion(lane_occlusion: float, exp_growth_factor: float = 5.0) -> float:
+    """
+    Calculates the unweighted cost for leaving the drivable lane area.
+    
+    Args:
+        lane_occlusion: Percentage of the vehicle currently on the road [0.0 - 1.0].
+        exp_growth_factor: Determines how steeply the cost explodes when leaving the road.
+        
+    Returns:
+        Exponentially growing cost based on the off-road ratio.
+    """
+    # off_road_ratio is 0.0 when fully on the road, 1.0 when fully off-road
+    off_road_ratio = 1.0 - lane_occlusion
+    
+    # Small tolerance to avoid penalizing micro-deviations (e.g., 99% on road)
+    if off_road_ratio > 0.01:
+        return math.exp(exp_growth_factor * off_road_ratio) - 1.0
+        
+    return 0.0
+
+
+def cost_opposite_lane(opposite_lane: bool, penalty: float = 1000.0) -> float:
+    """
+    Calculates the cost for driving on an oncoming traffic lane.
+    Uses a static step-function penalty.
+    """
+    return penalty if opposite_lane else 0.0
