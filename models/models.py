@@ -22,8 +22,8 @@ class VehicleParameters:
     max_steer: float            # maximum steering angle wheels [rad]
     max_steer_rate: float       # maximum steering rate wheels [rad/s]
 
-    Lf: float                   # CoG to front axle [m]
-    Lr: float                   # CoG to rear axle [m]
+    lf: float                   # CoG to front axle [m]
+    lr: float                   # CoG to rear axle [m]
     Iz: float                   #Moment of inertia [kg.m2]
 
     wheel_length: float          #Wheel length [m]
@@ -202,7 +202,6 @@ class PlanningRequest:
     target_speed: float         # target speed
     velocity_limit:float
 
-    vehicle_params: VehicleParameters
     environment: PredictedEnvironment
 
 
