@@ -30,6 +30,8 @@ class StateNode(NodeMixin):
         self.motion_primitive = motion_primitive
 
     def __lt__(self, other):
+        if self.total_cost == other.total_cost:
+            return self.id < other.id
         return self.total_cost < other.total_cost
     
     def __repr__(self) -> str:
