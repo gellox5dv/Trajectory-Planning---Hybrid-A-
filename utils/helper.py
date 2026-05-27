@@ -71,8 +71,8 @@ def load_vehicle_parameters() -> VehicleParameters:
     return VehicleParameters(
         max_steer = config.getfloat('vehicle', 'max_steer'),
         max_steer_rate = config.getfloat('vehicle', 'max_steer_rate'),
-        Lf = config.getfloat('vehicle', 'lf'),
-        Lr = config.getfloat('vehicle', 'lr'),
+        lf = config.getfloat('vehicle', 'lf'),
+        lr = config.getfloat('vehicle', 'lr'),
         Iz = config.getfloat('vehicle', 'Iz'),
         wheel_length = config.getfloat('vehicle', 'wheel_length'),
         wheel_width = config.getfloat('vehicle', 'wheel_width'),
