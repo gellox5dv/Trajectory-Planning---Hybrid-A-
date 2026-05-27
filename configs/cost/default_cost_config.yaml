@@ -9,26 +9,37 @@ search:
 # Transition Cost Multipliers 
 # ---------------------------------------------------------
 transition_weights:
-  jerk_long: 1.0               # Multiplier for longitudinal jerk
-  jerk_lat: 1.5                # Multiplier for lateral jerk
-  accel_long: 1.0              # Multiplier for longitudinal acceleration
-  accel_lat: 2.0               # Multiplier for lateral acceleration
+  jerk_long: 2.0               # Multiplier for longitudinal jerk
+  jerk_lat: 5.0                # Multiplier for lateral jerk
+  accel_long: 1.5              # Multiplier for longitudinal acceleration
+  accel_lat: 3.5               # Multiplier for lateral acceleration
   speed: 1.0                   # Multiplier for the total speed cost
-  objects: 1.0                 # Multiplier for the total object cost
+  objects: 2.0                 # Multiplier for the total object cost
+  lane_center: 4.0             # Multiplier for lateral deviation from lane center
+  lane_yaw: 15.0               # Multiplier for heading error relative to lane direction
+  lane_occlusion: 50.0         # Multiplier for leaving the drivable road area
+  opposite_lane: 1.0           # Multiplier for the oncoming traffic penalty
 
 # ---------------------------------------------------------
 # Function-Specific Parameters
 # ---------------------------------------------------------
 cost_target_speed_delta:
-  weight_underspeed: 1.0       # Linear penalty for driving too slow
-  weight_overspeed: 5.0        # Base weight for driving too fast
-  exp_growth_factor: 1.0       # Steepness of the overspeed exponential curve
+  weight_underspeed: 0.3       # Linear penalty for driving too slow
+  weight_overspeed: 10.0       # Base weight for driving too fast
+  exp_growth_factor: 1.5       # Steepness of the overspeed exponential curve
   max_penalty: 1000000.0       # Absolute maximum cost limit (1e6)
 
 cost_objects_force_field:
-  ego_safe_margin: 0.5         # Margin to inflate the ego vehicle's bounding box [m]
-  obj_safe_margin: 0.5         # Base margin to inflate dynamic object bounding boxes [m]
-  speed_expansion_factor: 0.4  # Multiplier to extend object force field based on speed [s]
-  weight_ff_high: 50.0         # High penalty weight for intersecting high force field
-  weight_ff_low: 1.0           # Base proximity weight outside the high force field
+  ego_safe_margin: 0.7         # Margin to inflate the ego vehicle's bounding box [m]
+  obj_safe_margin: 0.8         # Base margin to inflate dynamic object bounding boxes [m]
+  speed_expansion_factor_front: 1.8  # Multiplier to extend object force field on the front based on speed [s]
+  speed_expansion_factor_rear: 0.2   # Multiplier to extend object force field on the rear based on speed [s]
+  weight_ff_high: 100.0        # High penalty weight for intersecting high force field
+  weight_ff_low: 5.0           # Base proximity weight outside the high force field
   dist_epsilon: 0.1            # Small value to prevent division by zero
+
+cost_lane_occlusion:
+  exp_growth_factor: 5.0       # Steepness of the off-road exponential curve
+
+cost_opposite_lane:
+  penalty: 1000.0              # Heavy static penalty for driving on the oncoming lane
