@@ -4,7 +4,7 @@ from anytree.search import findall
 from motion_primitives import MotionPrimitive
 from motion_primitives import get_motion_primitives
 from state_node import StateNode
-import hydra
+from shapely.geometry import Polygon
 import heapq
 import math
 from omegaconf import DictConfig, OmegaConf
@@ -120,13 +120,16 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
                 prev_state=prev_stamped_state,
                 curr_state=curr_state,
                 request=request,
-                cost_cfg=cfg.cost
+                cost_cfg=cfg.cost,
+                veh_cfg=cfg.vehicle
             )
             
             # Estimate cost from the new state to the goal
             heuristic_cost = calculate_heuristic_cost(
                 state=curr_state,
-                request=request
+                request=request,
+                veh_cfg=cfg.vehicle,
+                max_a_lat=cfg.motion_primitives.max_a_lat
             )
             
             # Aggregate total weighted cost f(n) for the priority queue
@@ -217,11 +220,8 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
             trajectory=None,
             cost=None,
             status_message=status_message
-        )                           
+        )                                 
                                  
-
-
-
 
 def extract_path_stamped_states(end_node: StateNode) -> List[EgoStateStamped]:
     node = end_node
@@ -235,11 +235,7 @@ def extract_path_stamped_states(end_node: StateNode) -> List[EgoStateStamped]:
     return path
 
 
-import math
-from shapely.geometry import Polygon
-from omegaconf import DictConfig
 
-# from models.models import EgoStateStamped, GoalRegion  # Deine Importe
 
 def is_in_goal_region(
     state_stamped: EgoStateStamped, 
@@ -326,7 +322,3 @@ def _create_oriented_bounding_box(
         corners_global.append((gx, gy))
         
     return Polygon(corners_global)
-
-        
-
-
