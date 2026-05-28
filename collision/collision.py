@@ -1,12 +1,13 @@
 import heapq
 from math import pi, cos, sin
-from utils.helper import get_bbox_corners
+from utils.helper import get_bbox_corners, get_magnitude, get_vector
 from typing import Tuple, List, Optional, overload, Union, Sequence
 from models.models import (
     EgoState, EgoStateStamped, DynamicObject, DynamicObjectStamped,
-    VehicleParameters, Lane, Environment, PredictedEnvironment, Vector2D
+    Lane, Environment, PredictedEnvironment, Vector2D
 )
 from shapely.geometry import Polygon
+from omegaconf import DictConfig
 
 MovingObject = Union[EgoStateStamped, DynamicObjectStamped]
 
@@ -17,7 +18,7 @@ def get_x_y_yaw_from_state(state: MovingObject) -> Tuple[float, float, float]:
 def _ego_object_distance(
     ego_state: EgoStateStamped,
     obj: DynamicObjectStamped,
-    ego_params: VehicleParameters
+    ego_params: DictConfig
 ) -> float:
     """Calculate the distance from the ego vehicle to a dynamic object."""
     ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(ego_state)
@@ -64,13 +65,17 @@ def _create_interpolated_object(
     new_velocity: float
 ) -> MovingObject:
 
+    vel_vector = get_vector(new_velocity, new_yaw)
+
     if isinstance(base, EgoStateStamped):
         return EgoStateStamped(
             timestamp=new_timestamp,
             state=EgoState(
                 pos=new_pos,
                 yaw=new_yaw,
-                velocity=new_velocity
+                velocity=vel_vector,
+                acceleration=Vector2D(0.0, 0.0),
+                steering_angle=0.0,
             )
         )
 
@@ -82,7 +87,7 @@ def _create_interpolated_object(
                 obj_class=base.state.obj_class,
                 pos=new_pos,
                 yaw=new_yaw,
-                velocity=new_velocity,
+                velocity=vel_vector,
                 acceleration=0.0,
                 width=base.state.width,
                 length=base.state.length
@@ -123,8 +128,9 @@ def _interpolate_states(
     
     dx = (end_state.state.pos.x - start_state.state.pos.x)
     dy = (end_state.state.pos.y - start_state.state.pos.y)
-    dvel = (end_state.state.velocity - start_state.state.velocity)
+    dvel = (get_magnitude(end_state.state.velocity) - get_magnitude(start_state.state.velocity))
     dyaw = (end_state.state.yaw - start_state.state.yaw + pi) % (2 * pi) - pi
+    start_vel_magnitude = get_magnitude(start_state.state.velocity)
 
     interpolated_states = [start_state]
     t = 0
@@ -134,7 +140,7 @@ def _interpolate_states(
         interp_x = start_state.state.pos.x + (t * dx / orig_resolution_ms)
         interp_y = start_state.state.pos.y + (t * dy / orig_resolution_ms)
         interp_yaw = start_state.state.yaw + (t * dyaw / orig_resolution_ms)
-        interp_vel = start_state.state.velocity + (t * dvel / orig_resolution_ms)
+        interp_vel = start_vel_magnitude + (t * dvel / orig_resolution_ms)
 
         interpolated_state = _create_interpolated_object(
             base=start_state,
@@ -153,7 +159,7 @@ def get_distance_to_objects(
     current_ego: EgoStateStamped,
     previous_ego: EgoStateStamped,
     predicted_env: PredictedEnvironment,
-    vehicle_params: VehicleParameters,
+    vehicle_params: DictConfig,
     resolution_ms: int
 ) -> Tuple[Optional[Sequence[Tuple[int, float]]], bool]:
     """Checks the interval between two planning steps for collisions and calculates aggregated distances to all objects."""
@@ -196,7 +202,7 @@ def get_distance_to_objects(
 def _get_lane_occlusion(
     ego_state: EgoStateStamped,
     lane: Lane,
-    vehicle_params: VehicleParameters
+    vehicle_params: DictConfig
 ) -> float:
     """Calculate the area of the ego vehicle on the lane."""
     ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(ego_state)
@@ -259,7 +265,7 @@ def _get_lane_offset(
 
 def get_ego_lane_info(
     ego_state: EgoState,
-    vehicle_params: VehicleParameters,
+    vehicle_params: DictConfig,
     lanes: List[Lane]
 ) -> Tuple[int, float, float, float]:
     """
