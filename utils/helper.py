@@ -1,7 +1,7 @@
 from math import cos, pi, sin, hypot
 from typing import List, Optional, Tuple
 from configparser import ConfigParser
-from models.models import Vector2D, VehicleParameters, EgoStateStamped
+from models.models import Vector2D, VehicleParameters, EgoStateStamped, GoalRegion, DynamicObjectStamped
 import copy
 
 
@@ -142,3 +142,41 @@ def shift_cg_to_rear_axle(state_stamped: EgoStateStamped, lr: float) -> EgoState
     new_stamped.state.pos.y -= lr * sin(yaw)
     
     return new_stamped
+
+
+# function to get goal region which is infront of the vehicle being followed by ego vehicle
+def get_goal_region(
+        obs_f: DynamicObjectStamped,
+        distance_ahead: float = 20.0,
+        length: float = 1.0,
+        width: float = 1.0,
+        yaw_tolerance: float = pi / 8,
+        velocity_tolerance: float = 1.0
+    ) -> GoalRegion:
+    """
+    Get a goal region in front of the given dynamic object.
+    
+    Args:
+        obs_f (DynamicObjectStamped): The observed dynamic object.
+        distance_ahead (float): The distance ahead of the object to place the goal region [m].
+        length (float): The length of the goal region [m].
+        width (float): The width of the goal region [m].
+        yaw_tolerance (float): The tolerance for yaw orientation [rad].
+        velocity_tolerance (float): The tolerance for velocity [m/s].
+
+    Returns:
+        GoalRegion: A goal region located in front of the observed object.
+    """
+    # Calculate the position of the goal region
+    goal_x = obs_f.state.pos.x + distance_ahead * cos(obs_f.state.yaw)
+    goal_y = obs_f.state.pos.y + distance_ahead * sin(obs_f.state.yaw)
+    
+    return GoalRegion(
+        center=Vector2D(x=goal_x, y=goal_y),
+        length=length,
+        width=width,
+        yaw=obs_f.state.yaw,
+        yaw_tolerance=yaw_tolerance,
+        target_velocity=get_magnitude(obs_f.state.velocity),
+        velocity_tolerance=velocity_tolerance
+    )
