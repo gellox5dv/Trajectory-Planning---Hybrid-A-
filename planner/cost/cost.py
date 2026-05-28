@@ -125,8 +125,7 @@ def calculate_node_cost(
         previous_ego=prev_state,
         predicted_env=request.environment,
         veh_cfg=veh_cfg,
-        resolution_ms=request.dt_interpolation,
-        **cost_cfg.cost_objects_force_field
+        cost_cfg=cost_cfg   
     )
     detailed_costs["objects"] = weights.objects * object_cost_raw
     
