@@ -89,8 +89,13 @@ def load_vehicle_parameters() -> VehicleParameters:
         mu = config.getfloat('vehicle', 'mu')
     )
 
+
 def get_magnitude(vector: Vector2D) -> float:
     return hypot(vector.x, vector.y)
+
+
+def get_vector(magnitude: float, direction: float) -> Vector2D:
+    return Vector2D(x = magnitude * cos(direction), y = magnitude * sin(direction))
 
 
 def shift_rear_axle_to_cg(state_stamped: EgoStateStamped, lr: float) -> EgoStateStamped:
