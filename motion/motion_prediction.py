@@ -20,8 +20,8 @@ def predict_motion_constant_velocity(objects: list[DynamicObjectStamped], predic
         predicted_states = []
         
         for t in range(0, prediction_horizon + dt, dt):
-            new_x = current_state.pos.x + current_state.velocity * cos(current_state.yaw) * (t / 1000.0)
-            new_y = current_state.pos.y + current_state.velocity * sin(current_state.yaw) * (t / 1000.0)
+            new_x = current_state.pos.x + current_state.velocity.x * (t / 1000.0)
+            new_y = current_state.pos.y + current_state.velocity.y * (t / 1000.0)
             new_pos = Vector2D(x=new_x, y=new_y)
             
             predicted_state = DynamicObjectStamped(
@@ -32,7 +32,7 @@ def predict_motion_constant_velocity(objects: list[DynamicObjectStamped], predic
                     pos=new_pos,
                     yaw=current_state.yaw,
                     velocity=current_state.velocity,
-                    acceleration=0.0,  # Assuming constant velocity, so acceleration is zero
+                    acceleration=Vector2D(x=0.0, y=0.0),  # Assuming constant velocity, so acceleration is zero
                     width=current_state.width,
                     length=current_state.length
                 )
@@ -63,11 +63,11 @@ def predict_motion_constant_acceleration(objects: list[DynamicObjectStamped], pr
         predicted_states = []
         
         for t in range(0, prediction_horizon + dt, dt):
-            new_x = current_state.pos.x + current_state.velocity * cos(current_state.yaw) * (t / 1000.0) + 0.5 * current_state.acceleration * cos(current_state.yaw) * ((t / 1000.0) ** 2)
-            new_y = current_state.pos.y + current_state.velocity * sin(current_state.yaw) * (t / 1000.0) + 0.5 * current_state.acceleration * sin(current_state.yaw) * ((t / 1000.0) ** 2)
+            new_x = current_state.pos.x + current_state.velocity.x * (t / 1000.0) + 0.5 * current_state.acceleration.x * ((t / 1000.0) ** 2)
+            new_y = current_state.pos.y + current_state.velocity.y * (t / 1000.0) + 0.5 * current_state.acceleration.y * ((t / 1000.0) ** 2)
             new_pos = Vector2D(x=new_x, y=new_y)
             
-            new_velocity = current_state.velocity + current_state.acceleration * (t / 1000.0)
+            new_velocity = Vector2D(x=current_state.velocity.x + current_state.acceleration.x * (t / 1000.0), y=current_state.velocity.y + current_state.acceleration.y * (t / 1000.0))
             
             predicted_state = DynamicObjectStamped(
                 timestamp=obj.timestamp + t,

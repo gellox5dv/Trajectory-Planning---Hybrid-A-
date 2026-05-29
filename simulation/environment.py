@@ -1,5 +1,6 @@
 from math import pi
 from types import SimpleNamespace
+from utils.helper import get_vector
 from models.models import Vector2D, Lane, ObjectType, DynamicObjectStamped, DynamicObject, Environment
 
 
@@ -28,8 +29,8 @@ obs1 = DynamicObjectStamped(
         obj_class = ObjectType.VEHICLE,
         pos = Vector2D(x = 100.0, y = 2.0),
         yaw = 0.0,
-        velocity = 8.0 + 1/3,       # 30 km/h
-        acceleration = 0.0,
+        velocity = get_vector(8.0 + 1/3, 0.0),       # 30 km/h
+        acceleration = Vector2D(x=0.0, y=0.0),
         width = VEHICLE_DIMS.width,
         length = VEHICLE_DIMS.length
     )
@@ -42,8 +43,8 @@ obs2 = DynamicObjectStamped(
         obj_class = ObjectType.VEHICLE,
         pos = Vector2D(x = 1800.0, y = 6.0),
         yaw = pi,
-        velocity = 13.0 + 8/9,      # 50 km/h
-        acceleration = 0.0,
+        velocity = get_vector(13.0 + 8/9, 0.0),      # 50 km/h
+        acceleration = Vector2D(x=0.0, y=0.0),
         width = VEHICLE_DIMS.width,
         length = VEHICLE_DIMS.length
     )

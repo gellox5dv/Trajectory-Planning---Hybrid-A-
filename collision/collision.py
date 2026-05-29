@@ -88,7 +88,7 @@ def _create_interpolated_object(
                 pos=new_pos,
                 yaw=new_yaw,
                 velocity=vel_vector,
-                acceleration=0.0,
+                acceleration=Vector2D(0.0, 0.0),
                 width=base.state.width,
                 length=base.state.length
             )
