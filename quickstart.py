@@ -16,6 +16,9 @@ def install_packages():
     packages = [
         "anytree",
         "hydra-core",
+        "matplotlib",
+        "numpy",
+        "pyyaml",
         "shapely"
     ]
 
