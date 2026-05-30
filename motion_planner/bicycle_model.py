@@ -4,59 +4,26 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.transforms as transforms
-from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional, List, Tuple, Dict
 
+import yaml
 
-#  ─ DATACLASSES ─
+try:
+    from .models import DynamicState, EgoInput, EgoStateStamped, VehicleParameters
+except ImportError:
+    from models import DynamicState, EgoInput, EgoStateStamped, VehicleParameters
 
-@dataclass
-class VehicleParameters:
-    max_steer:        float
-    max_steer_rate:   float
-    L:                float
-    Lf:               float
-    Lr:               float
-    width:            float
-    length:           float
-    m:                float
-    Iz:               float
-    Cf:               float
-    Cr:               float
-    max_acceleration: float
-    max_deceleration: float
-    mu:               float
+DEFAULT_COST_CONFIG_PATH = Path(__file__).parent / ".." / "configs" / "cost" / "default_cost_config.yaml"
 
 
-@dataclass
-class EgoStateStamped:
-    x:         float
-    y:         float
-    yaw:       float
-    v:         float
-    steer:     float
-    timestamp: float = 0.0
-    beta:      float = 0.0
-    yaw_rate:  float = 0.0
+def load_cost_config(path: Path = DEFAULT_COST_CONFIG_PATH) -> dict:
+    """Load cost configuration from YAML."""
+    with path.open("r", encoding="utf-8") as file:
+        return yaml.safe_load(file) or {}
 
 
-@dataclass
-class EgoInput:
-    acceleration: float
-    steer_rate:   float
-
-
-@dataclass
-class DynamicState:
-    x:         float
-    y:         float
-    yaw:       float
-    vx:        float
-    vy:        float
-    yaw_rate:  float
-    steer:     float
-    beta:      float = 0.0
-    timestamp: float = 0.0
+config = load_cost_config()
 
 
 #  ─ BICYCLE MODEL ─
@@ -359,6 +326,11 @@ class Vehicle:
             L                = self.wheel_base,
             Lf               = self.lf,
             Lr               = self.lr,
+            wheel_base       = self.wheel_base,
+            wheel_length     = self.wheel_length,
+            wheel_width      = self.wheel_width,
+            track            = self.track,
+            rear_to_wheel    = self.rear_to_wheel,
             width            = self.width,
             length           = self.length,
             m                = self.mass,
