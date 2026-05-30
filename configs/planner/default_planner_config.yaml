@@ -1,0 +1,13 @@
+# ---------------------------------------------------------
+# Timing & Resolution 
+# ---------------------------------------------------------
+horizon: 3000             # Planning horizon [ms]
+dt_sim: 100               # Internal integration step via kinematic model [ms]
+dt_interpolation: 10      # Internal interpolation resolution for calculating object distances [ms]
+dt_output: 300            # Output resolution (multiple of dt_sim) [ms]
+
+# ---------------------------------------------------------
+# Constraints
+# ---------------------------------------------------------
+max_compute_time: 100     # Time budget [ms]
+extract_path_time: 1
