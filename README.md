@@ -396,13 +396,13 @@ class Controller:
         Initializes the Controller.
         """
 
-    def calc_acceleration(Ego: EgoStateStamped, params: VehicleParameters, Waypoints: Trajectory) -> float:
+    def calc_acceleration(Ego: EgoStateStamped, veh_cfg: DictConfig , Waypoints: Trajectory) -> float:
         """
         Calculate the acceleration, given the Trajectory.
         """
 
 
-    def calc_steer_rate(Ego: EgoStateStamped, params: VehicleParameters, Waypoints: Trajectory) -> float:
+    def calc_steer_rate(Ego: EgoStateStamped, veh_cfg: DictConfig, Waypoints: Trajectory) -> float:
         """
         Calculate the steering-rate, given the Trajectory.
         """
