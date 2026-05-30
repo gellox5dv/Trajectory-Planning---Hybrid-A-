@@ -184,10 +184,6 @@ class GoalRegion:
     width: float                # lateral size [m]
 
     yaw: float                  # desired heading [rad]
-    yaw_tolerance: float        # allowed deviation [rad]
-
-    target_velocity: float      # desired speed [m/s]
-    velocity_tolerance: float   # allowed speed deviation [m/s]
 
 
 # ============================================================
@@ -200,7 +196,6 @@ class PlanningRequest:
 
     goal_region: GoalRegion     # target region
     target_speed: float         # target speed
-    velocity_limit:float
 
     environment: PredictedEnvironment
 
