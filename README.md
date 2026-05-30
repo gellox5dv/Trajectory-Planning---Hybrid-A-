@@ -68,6 +68,12 @@ This module represents the world and is responsible for:
 
 It acts as the central data source for the entire system.
 
+
+### Yaw Explanation
+
+![Yaw Animation](imgs/YawAnimation.gif)
+
+
 ## Simulation Interface
 
 Defines how other modules interact with the simulation.

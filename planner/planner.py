@@ -100,7 +100,7 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
             velocity=get_magnitude(prev_stamped_state.state.velocity),
             steering_angle=prev_stamped_state.state.steering_angle,
             veh_cfg=cfg.vehicle,
-            velocity_limit=request.velocity_limit,
+            velocity_limit=request.target_speed,
             acceleration=get_magnitude(prev_stamped_state.state.acceleration),
             mp_cfg=cfg.motion_primitives
         )

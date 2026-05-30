@@ -133,41 +133,30 @@ def cost_objects_force_field(
     previous_ego: EgoStateStamped,
     predicted_env: PredictedEnvironment,
     veh_cfg: DictConfig,
-    resolution_ms: int,
-    ego_safe_margin: float = 0.5,        
-    obj_safe_margin: float = 0.5,        
-    speed_expansion_factor_front: float = 0.4,
-    speed_expansion_factor_rear: float = 0.2,
-    weight_ff_high: float = 50.0,        
-    weight_ff_low: float = 1.0,          
-    dist_epsilon: float = 0.1
+    cost_cfg: DictConfig
 ) -> float:
     """
     Calculates proximity costs to dynamic objects using an asymmetrical dual force-field approach.
-    The force field dynamically expands differently to the front and rear based on the object's speed.
+    Aggregates costs via LogSumExp to safely center the vehicle in narrow gaps while maintaining worst-case dominance.
 
     Args:
-        current_ego (EgoStateStamped): The current state of the ego vehicle.
-        previous_ego (EgoStateStamped): The previous state of the ego vehicle (for continuous collision check).
-        predicted_env (PredictedEnvironment): Environment data containing dynamic object predictions.
-        veh_cfg (DictConfig): Hydra configuration object containing the ego vehicle's dimensions.
-        resolution_ms (int): Interpolation resolution for the collision checker [ms].
-        ego_safe_margin (float): Margin to inflate the ego vehicle's bounding box [m].
-        obj_safe_margin (float): Base margin to inflate dynamic object bounding boxes [m].
-        speed_expansion_factor_front (float): Multiplier to dynamically extend the object's force field to the front based on speed [s].
-        speed_expansion_factor_rear (float): Multiplier to dynamically extend the object's force field to the rear based on speed [s].
-        weight_ff_high (float): High penalty weight applied when intersecting an object's high force field.
-        weight_ff_low (float): Base proximity weight applied outside the high force field.
-        dist_epsilon (float): Small value to prevent division by zero in distance calculations.
+        current_ego (EgoStateStamped): The current kinematic and spatial state of the ego vehicle.
+        previous_ego (EgoStateStamped): The previous state of the ego vehicle, used for continuous collision checking.
+        predicted_env (PredictedEnvironment): Environment data containing future trajectory predictions for dynamic objects.
+        veh_cfg (DictConfig): Vehicle configuration containing physical dimensions (e.g., length, width, rear_to_wheel).
+        cost_cfg (DictConfig): Cost configuration containing all tuning parameters and the collision checker resolution.
 
     Returns:
-        float: The maximum calculated proximity cost across all objects, or float('inf') if a hard collision occurs.
+        float: The total aggregated proximity cost. Returns float('inf') if a hard collision is detected. 
+               Otherwise, returns a LogSumExp aggregated value of exponential (high risk) and quadratic (low risk) costs.
     """
     
-    # 1. Get exact distances and check for hard collisions in the current time step
-    #TODO change function head for veh_cfg
+    # Extract specific force field parameters for direct access
+    ff_cfg = cost_cfg.cost_objects_force_field
+    
+    # 1. Get exact distances and check for hard collisions using the resolution from config
     distances, is_collision = get_distance_to_objects(
-        current_ego, previous_ego, predicted_env, veh_cfg, resolution_ms
+        current_ego, previous_ego, predicted_env, veh_cfg, ff_cfg.resolution_ms
     )
     
     if is_collision:
@@ -176,22 +165,36 @@ def cost_objects_force_field(
     if not distances:
         return 0.0
 
-    # 2. Construct the Ego "Safe Area" Polygon
+    # 2. Construct the Ego's Dynamic "Force Field High" Polygon
     ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(current_ego)
     
-    # Shift reference point from rear axle to the geometric center
-    ego_x_center = ego_x + (veh_cfg.length / 2 - veh_cfg.rear_to_wheel) * math.cos(ego_yaw)
-    ego_y_center = ego_y + (veh_cfg.length / 2 - veh_cfg.rear_to_wheel) * math.sin(ego_yaw)
+    # Extract Ego kinematics using the helper function
+    ego_speed = get_magnitude(current_ego.state.velocity)
+    ego_accel = get_magnitude(current_ego.state.acceleration)
     
-    # Inflate the ego bounding box by the safety margin
+    # Calculate dynamic expansion for the ego vehicle
+    ego_front_exp = ego_speed * ff_cfg.speed_expansion_factor_front + ego_accel * ff_cfg.accel_expansion_factor_front
+    ego_rear_exp = ego_speed * ff_cfg.speed_expansion_factor_rear + ego_accel * ff_cfg.accel_expansion_factor_rear
+    
+    # Shift reference point from the rear axle to the geometric center
+    ego_x_center = ego_x + (veh_cfg.length / 2.0 - veh_cfg.rear_to_wheel) * math.cos(ego_yaw)
+    ego_y_center = ego_y + (veh_cfg.length / 2.0 - veh_cfg.rear_to_wheel) * math.sin(ego_yaw)
+    
+    # Apply asymmetrical dynamic shift
+    ego_shift = (ego_front_exp - ego_rear_exp) / 2.0
+    ego_ffh_center_x = ego_x_center + ego_shift * math.cos(ego_yaw)
+    ego_ffh_center_y = ego_y_center + ego_shift * math.sin(ego_yaw)
+    
+    # Calculate the total dynamic bounding box dimensions
+    ego_ffh_length = veh_cfg.length + 2 * ff_cfg.ego_safe_margin + ego_front_exp + ego_rear_exp
+    ego_ffh_width = veh_cfg.width + 2 * ff_cfg.ego_safe_margin
+    
     ego_corners = get_bbox_corners(
-        ego_x_center, ego_y_center, ego_yaw,
-        veh_cfg.length + 2 * ego_safe_margin,
-        veh_cfg.width + 2 * ego_safe_margin
+        ego_ffh_center_x, ego_ffh_center_y, ego_yaw, ego_ffh_length, ego_ffh_width
     )
-    ego_safe_polygon = Polygon([(c.x, c.y) for c in ego_corners])
+    ego_ffh_polygon = Polygon([(c.x, c.y) for c in ego_corners])
 
-    max_cost = 0.0
+    sum_exp = 0.0
     
     # 3. Evaluate force fields for each relevant object
     for obj_id, base_dist in distances:
@@ -206,51 +209,53 @@ def cost_objects_force_field(
                 current_obj_state = state
                 break
 
-        # Extract object coordinates
         obj_x = current_obj_state.state.pos.x
         obj_y = current_obj_state.state.pos.y
         obj_yaw = current_obj_state.state.yaw
-        obj_speed = abs(current_obj_state.state.velocity)
         
-        # 4. Construct the Object's Asymmetrical "Force Field High"
-        # Base dimensions (including static margins)
-        base_length = current_obj_state.state.length + 2 * obj_safe_margin
-        ff_high_width = current_obj_state.state.width + 2 * obj_safe_margin
+        # Extract object kinematics seamlessly using the Vector2D helper function
+        obj_speed = get_magnitude(current_obj_state.state.velocity)
+        obj_accel = get_magnitude(current_obj_state.state.acceleration)
         
-        # Dynamic expansions based on speed
-        front_expansion = obj_speed * speed_expansion_factor_front
-        rear_expansion = obj_speed * speed_expansion_factor_rear
+        # Calculate dynamic expansion for the object
+        obj_front_exp = obj_speed * ff_cfg.speed_expansion_factor_front + obj_accel * ff_cfg.accel_expansion_factor_front
+        obj_rear_exp = obj_speed * ff_cfg.speed_expansion_factor_rear + obj_accel * ff_cfg.accel_expansion_factor_rear
         
-        # Total new length of the bounding box
-        ff_high_length = base_length + front_expansion + rear_expansion
+        # Base dimensions plus dynamic shift
+        base_length = current_obj_state.state.length + 2 * ff_cfg.obj_safe_margin
+        ff_high_width = current_obj_state.state.width + 2 * ff_cfg.obj_safe_margin
         
-        # Calculate the shift of the geometric center
-        # Since we expand asymmetrically, the center moves forward by half the difference
-        shift_distance = (front_expansion - rear_expansion) / 2.0
+        ff_high_length = base_length + obj_front_exp + obj_rear_exp
+        shift_distance = (obj_front_exp - obj_rear_exp) / 2.0
         
         ff_center_x = obj_x + shift_distance * math.cos(obj_yaw)
         ff_center_y = obj_y + shift_distance * math.sin(obj_yaw)
         
-        # Generate bounding box with the new shifted center and total length
         obj_corners = get_bbox_corners(
-            ff_center_x, ff_center_y, obj_yaw, 
-            ff_high_length, ff_high_width
+            ff_center_x, ff_center_y, obj_yaw, ff_high_length, ff_high_width
         )
-        obj_ff_high_polygon = Polygon([(c.x, c.y) for c in obj_corners])
+        obj_ffh_polygon = Polygon([(c.x, c.y) for c in obj_corners])
 
-        # 5. Apply Cost Mapping
-        if ego_safe_polygon.intersects(obj_ff_high_polygon):
-            # Overlap with High Force Field
-            cost = weight_ff_high / (base_dist + dist_epsilon)
+        # 4. Cost Mapping (Intersection vs. Proximity)
+        if ego_ffh_polygon.intersects(obj_ffh_polygon):
+            # FFH High: Exponential cost to handle narrow gaps securely
+            cost = ff_cfg.weight_ff_high * math.exp(-ff_cfg.decay_factor_high * base_dist)
         else:
-            # Outside High Force Field, apply base safety cost
-            cost = weight_ff_low / (base_dist + dist_epsilon)
+            # FFL Low: Quadratic virtual spring for smooth anticipation
+            if base_dist < ff_cfg.d_ffl:
+                cost = ff_cfg.weight_ff_low * ((ff_cfg.d_ffl - base_dist) / ff_cfg.d_ffl) ** 2
+            else:
+                cost = 0.0
+                
+        # 5. LogSumExp Aggregation Preparation
+        sum_exp += math.exp(ff_cfg.lse_alpha * cost)
             
-        # 6. Aggregate maximum cost
-        if cost > max_cost:
-            max_cost = cost
-            
-    return max_cost
+    # Final LogSumExp evaluation
+    if sum_exp == 0.0:
+        return 0.0
+        
+    total_lse_cost = (1.0 / ff_cfg.lse_alpha) * math.log(sum_exp)
+    return total_lse_cost
 
 
 
