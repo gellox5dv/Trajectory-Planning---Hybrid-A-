@@ -96,6 +96,10 @@ class SimulationInterface:
     def apply_acceleration(self, acc: float) -> None:
         """Applies the acceleration."""
         pass
+
+    def step(self, dt: float) -> None:
+        """Simulates for dt milliseconds."""
+        pass
 ```
 
 ## Collision Checking
