@@ -44,6 +44,7 @@ def main(cfg: DictConfig):
         planning_request = PlanningRequest(
             start_state=sim.get_ego_state(),
             goal_region=goal_region,
+            target_speed=goal_region.target_velocity,
             vehicle_params=vehicle_params,
             environment= pred_env,
             horizon=HORIZON,
@@ -52,7 +53,7 @@ def main(cfg: DictConfig):
             max_compute_time=200
         )
 
-        plan_result = plan(planning_request)
+        plan_result = plan(planning_request, cfg)
 
         if plan_result.success and plan_result.trajectory is not None:
             # controller recalculates the ego input
