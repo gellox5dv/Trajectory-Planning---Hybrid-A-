@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Optional
 from enum import Enum
 
@@ -54,12 +54,17 @@ class VehicleParameters:
 @dataclass
 class EgoState:
     pos: Vector2D               # position (x, y) in global coordinate system [m]
-    velocity: Vector2D          # velocity (x,y) in global coordinate system [m/s]
-    acceleration: Vector2D      # acceleration (x,y) in global coordinate system [m/s]
-    yaw: float                  # heading angle in global coordinate system [rad]
-    steering_angle: float       # angle of the wheels [rad]
+    yaw: float = 0.0            # heading angle in global coordinate system [rad]
+    velocity: Vector2D | float = field(default_factory=lambda:Vector2D(0.0, 0.0))   # velocity (x,y) in global coordinate system [m/s]
+    acceleration: Vector2D | float = field(default_factory=lambda:Vector2D(0.0, 0.0))    # acceleration (x,y) in global coordinate system [m/s]
+    steering_angle: float = 0.0      # angle of the wheels [rad]
     
-
+    def __post__init__(self) -> None:
+        # Ensure velocity and acceleration are Vector2D instances
+        if isinstance(self.velocity, (int, float)):
+            self.velocity = Vector2D(x=float(self.velocity), y=0.0)
+        if isinstance(self.acceleration, (int, float)):
+            self.acceleration = Vector2D(x=float(self.acceleration), y=0.0)
 
 @dataclass
 class EgoStateStamped:
