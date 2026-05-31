@@ -189,7 +189,9 @@ class GoalRegion:
     width: float                # lateral size [m]
 
     yaw: float                  # desired heading [rad]
-
+    yaw_tolerance: float = 0.0      #Allowable error in the heading [rad]
+    target_velocity: float = 0.0    # Target velocity [m/s]
+    velocity_tolerance: float = 0.0 # Allowable error in velocity [m/s]
 
 # ============================================================
 # Planner Interface
