@@ -1,5 +1,6 @@
 import math
 import heapq
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -9,10 +10,18 @@ from typing import Optional, List, Tuple, Dict
 
 import yaml
 
-try:
-    from .models import DynamicState, EgoInput, EgoStateStamped, VehicleParameters
-except ImportError:
-    from models import DynamicState, EgoInput, EgoStateStamped, VehicleParameters
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from models.models import (
+    DynamicState,
+    EgoInput,
+    EgoState,
+    EgoStateStamped,
+    VehicleParameters,
+    Vector2D,
+)
 
 DEFAULT_COST_CONFIG_PATH = Path(__file__).parent / ".." / "configs" / "cost" / "default_cost_config.yaml"
 
@@ -35,6 +44,15 @@ def bicycle_model(
     dt:      float
 ) -> EgoStateStamped:
 
+    if not hasattr(state, "x"):
+        state.x = state.state.pos.x
+        state.y = state.state.pos.y
+        state.yaw = state.state.yaw
+        state.v = state.state.velocity.x if isinstance(state.state.velocity, Vector2D) else state.state.velocity
+        state.steer = state.state.steering_angle
+        state.beta = 0.0
+        state.yaw_rate = 0.0
+
     steer_new = state.steer + control.steer_rate * dt
     steer_new = np.clip(steer_new, -params.max_steer, params.max_steer)
 
@@ -45,7 +63,7 @@ def bicycle_model(
 
     if v_new > 1e-3:
         Cf, Cr   = params.Cf, params.Cr
-        lf, lr   = params.Lf, params.Lr
+        lf, lr   = params.lf, params.lr
         m, Iz, v = params.m, params.Iz, v_new
 
         A11 = -(Cf + Cr) / (m * v)
@@ -73,11 +91,23 @@ def bicycle_model(
     x_new = state.x + v_new * np.cos(beta_new + state.yaw) * dt
     y_new = state.y + v_new * np.sin(beta_new + state.yaw) * dt
 
-    return EgoStateStamped(
-        x=x_new, y=y_new, yaw=yaw_new, v=v_new,
-        steer=steer_new, timestamp=state.timestamp + dt,
-        beta=beta_new, yaw_rate=psi_dot_new
+    next_state = EgoStateStamped(
+        timestamp=state.timestamp + dt,
+        state=EgoState(
+            pos=Vector2D(x=x_new, y=y_new),
+            yaw=yaw_new,
+            velocity=v_new,
+            steering_angle=steer_new,
+        ),
     )
+    next_state.x = x_new
+    next_state.y = y_new
+    next_state.yaw = yaw_new
+    next_state.v = v_new
+    next_state.steer = steer_new
+    next_state.beta = beta_new
+    next_state.yaw_rate = psi_dot_new
+    return next_state
 
 #  ─ OVERTAKE MANOEUVRE ─
 
@@ -153,7 +183,7 @@ class Visualizer:
 
         # Car body
         body = patches.FancyBboxPatch(
-            (-p.Lr, -p.width / 2), p.L, p.width,
+            (-p.lr, -p.width / 2), p.wheel_base, p.width,
             boxstyle="round,pad=0.05",
             linewidth=1.2,
             edgecolor='#185FA5',
@@ -167,8 +197,8 @@ class Visualizer:
 
         # Windscreen
         wscreen = patches.FancyBboxPatch(
-            (p.Lf * 0.1, -p.width * 0.28),
-            p.Lf * 0.75, p.width * 0.56,
+            (p.lf * 0.1, -p.width * 0.28),
+            p.lf * 0.75, p.width * 0.56,
             boxstyle="round,pad=0.02",
             linewidth=0,
             facecolor='#85B7EB',
@@ -182,10 +212,10 @@ class Visualizer:
 
         # Four wheels
         wheel_defs = [
-            ( p.Lf,  ht,  True),
-            ( p.Lf, -ht,  True),
-            (-p.Lr,  ht,  False),
-            (-p.Lr, -ht,  False),
+            ( p.lf,  ht,  True),
+            ( p.lf, -ht,  True),
+            (-p.lr,  ht,  False),
+            (-p.lr, -ht,  False),
         ]
         for dx, dy, steered in wheel_defs:
             wx, wy = world(dx, dy)
@@ -213,7 +243,7 @@ class Visualizer:
 
         # Steering arc
         if abs(state.steer) > 0.01:
-            fax, fay = world(p.Lf, 0)
+            fax, fay = world(p.lf, 0)
             arc = patches.Arc(
                 (fax, fay), 1.0, 1.0,
                 angle=math.degrees(yaw),
@@ -323,9 +353,8 @@ class Vehicle:
         self.params = VehicleParameters(
             max_steer        = 0.6,
             max_steer_rate   = 0.5,
-            L                = self.wheel_base,
-            Lf               = self.lf,
-            Lr               = self.lr,
+            lf               = self.lf,
+            lr               = self.lr,
             wheel_base       = self.wheel_base,
             wheel_length     = self.wheel_length,
             wheel_width      = self.wheel_width,
@@ -342,8 +371,25 @@ class Vehicle:
             mu               = 0.85
         )
 
-        self.state   = EgoStateStamped(x=x, y=y, yaw=yaw, v=v, steer=0.0)
-        self.control = EgoInput(acceleration=0.0, steer_rate=0.0)
+        self.state = EgoStateStamped(
+            timestamp=0.0,
+            state=EgoState(
+                pos=Vector2D(x=x, y=y),
+                yaw=yaw,
+                velocity=v,
+                steering_angle=0.0,
+            ),
+        )
+        self.state.x = x
+        self.state.y = y
+        self.state.yaw = yaw
+        self.state.v = v
+        self.state.steer = 0.0
+        self.state.beta = 0.0
+        self.state.yaw_rate = 0.0
+
+        self.control = EgoInput(steering_angle=0.0, acceleration=0.0)
+        self.control.steer_rate = 0.0
         self.viz     = Visualizer(self)
 
         # Overtake phase tracker
@@ -380,7 +426,8 @@ class Vehicle:
                                -self.params.max_steer_rate,
                                 self.params.max_steer_rate)
 
-        self.control = EgoInput(acceleration=0.0, steer_rate=steer_rate)
+        self.control = EgoInput(steering_angle=target_steer, acceleration=0.0)
+        self.control.steer_rate = steer_rate
         self.Motion_model(dt)
 
     def Motion_model(self, dt: float = 0.05):
@@ -409,13 +456,21 @@ class DynamicBicycleModel:
 
     def step(self, state: DynamicState, control: EgoInput, dt: float) -> DynamicState:
 
+        if not hasattr(state, "x"):
+            state.x = state.pos.x
+            state.y = state.pos.y
+            state.vx = state.velocity.x
+            state.vy = state.velocity.y
+            state.steer = 0.0
+            state.timestamp = 0.0
+
         steer_new = state.steer + control.steer_rate * dt
 
         if abs(state.vx) > 1e-6:
             alpha_f = steer_new - np.arctan2(
-                state.vy + self.params.Lf * state.yaw_rate, state.vx)
+                state.vy + self.params.lf * state.yaw_rate, state.vx)
             alpha_r = -np.arctan2(
-                state.vy - self.params.Lr * state.yaw_rate, state.vx)
+                state.vy - self.params.lr * state.yaw_rate, state.vx)
         else:
             alpha_f = 0.0
             alpha_r = 0.0
@@ -424,7 +479,7 @@ class DynamicBicycleModel:
         F_yr     = self.params.Cr * alpha_r
         ax       = control.acceleration
         ay       = (F_yf + F_yr) / self.params.m
-        yaw_ddot = (self.params.Lf * F_yf - self.params.Lr * F_yr) / self.params.Iz
+        yaw_ddot = (self.params.lf * F_yf - self.params.lr * F_yr) / self.params.Iz
 
         vx_new       = state.vx + (ax - state.vy * state.yaw_rate) * dt
         vy_new       = state.vy + (ay + state.vx * state.yaw_rate) * dt
@@ -436,13 +491,19 @@ class DynamicBicycleModel:
                               + state.vy * np.cos(state.yaw)) * dt
         yaw_new = state.yaw + state.yaw_rate * dt
 
-        return DynamicState(
-            x=x_new, y=y_new, yaw=yaw_new,
-            vx=vx_new, vy=vy_new,
+        next_state = DynamicState(
+            pos=Vector2D(x=x_new, y=y_new),
+            yaw=yaw_new,
+            velocity=Vector2D(x=vx_new, y=vy_new),
             yaw_rate=yaw_rate_new,
-            steer=steer_new,
-            timestamp=state.timestamp + dt
         )
+        next_state.x = x_new
+        next_state.y = y_new
+        next_state.vx = vx_new
+        next_state.vy = vy_new
+        next_state.steer = steer_new
+        next_state.timestamp = state.timestamp + dt
+        return next_state
 
 
 #  ─ MAIN ─

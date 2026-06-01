@@ -205,8 +205,7 @@ class PlanningRequest:
     target_speed: float         # target speed
 
     environment: PredictedEnvironment
-
-
+    
 # ============================================================
 # Planner Output
 # ============================================================
