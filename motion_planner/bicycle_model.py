@@ -43,15 +43,7 @@ def bicycle_model(
     params:  VehicleParameters,
     dt:      float
 ) -> EgoStateStamped:
-
-   # if not hasattr(state, "x"):
-    #    state.x = state.state.pos.x
-     #   state.y = state.state.pos.y
-     #   state.yaw = state.state.yaw
-     #   state.steer = state.state.steering_angle
-      #  state.beta = 0.0
-      #  state.yaw_rate = 0.0
-
+    
     steer_new = state.steer + control.steer_rate * dt
     steer_new = np.clip(steer_new, -params.max_steer, params.max_steer)
 
@@ -415,7 +407,7 @@ class Vehicle:
         target_deg = OVERTAKE_PHASES[self._phase_index][1]
         return math.radians(target_deg)
 
-    def Motion_control(self, dt: float = 0.05):
+    def Motion_control(self, dt: float = 0.05): #######
         """
         P controller tracking the overtake phase target steering angle.
         """
@@ -454,15 +446,7 @@ class DynamicBicycleModel:
         self.params = params
 
     def step(self, state: DynamicState, control: EgoInput, dt: float) -> DynamicState:
-
-        if not hasattr(state, "x"):
-            state.x = state.pos.x
-            state.y = state.pos.y
-            state.vx = state.velocity.x
-            state.vy = state.velocity.y
-            state.steer = 0.0
-            state.timestamp = 0.0
-
+        
         steer_new = state.steer + control.steer_rate * dt
 
         if abs(state.vx) > 1e-6:
