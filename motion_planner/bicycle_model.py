@@ -44,14 +44,13 @@ def bicycle_model(
     dt:      float
 ) -> EgoStateStamped:
 
-    if not hasattr(state, "x"):
-        state.x = state.state.pos.x
-        state.y = state.state.pos.y
-        state.yaw = state.state.yaw
-        state.v = state.state.velocity.x if isinstance(state.state.velocity, Vector2D) else state.state.velocity
-        state.steer = state.state.steering_angle
-        state.beta = 0.0
-        state.yaw_rate = 0.0
+   # if not hasattr(state, "x"):
+    #    state.x = state.state.pos.x
+     #   state.y = state.state.pos.y
+     #   state.yaw = state.state.yaw
+     #   state.steer = state.state.steering_angle
+      #  state.beta = 0.0
+      #  state.yaw_rate = 0.0
 
     steer_new = state.steer + control.steer_rate * dt
     steer_new = np.clip(steer_new, -params.max_steer, params.max_steer)
