@@ -1,7 +1,7 @@
 from math import cos, pi, sin, hypot
 from typing import List, Optional, Tuple
 from configparser import ConfigParser
-from models.models import Vector2D, VehicleParameters, EgoStateStamped, GoalRegion, DynamicObjectStamped
+from models.models import Vector2D, VehicleParameters, EgoStateStamped, Lane
 import copy
 
 
@@ -144,39 +144,29 @@ def shift_cg_to_rear_axle(state_stamped: EgoStateStamped, lr: float) -> EgoState
     return new_stamped
 
 
-# function to get goal region which is infront of the vehicle being followed by ego vehicle
-def get_goal_region(
-        obs_f: DynamicObjectStamped,
-        distance_ahead: float = 20.0,
-        length: float = 1.0,
-        width: float = 1.0,
-        yaw_tolerance: float = pi / 8,
-        velocity_tolerance: float = 1.0
-    ) -> GoalRegion:
+def get_nearest_lane_center(ego_state: EgoStateStamped, lanes: List[Lane]) -> Tuple[float, Vector2D]:
     """
-    Get a goal region in front of the given dynamic object.
+    Find the nearest lane center point to the ego vehicle.
     
     Args:
-        obs_f (DynamicObjectStamped): The observed dynamic object.
-        distance_ahead (float): The distance ahead of the object to place the goal region [m].
-        length (float): The length of the goal region [m].
-        width (float): The width of the goal region [m].
-        yaw_tolerance (float): The tolerance for yaw orientation [rad].
-        velocity_tolerance (float): The tolerance for velocity [m/s].
+        ego_state (EgoStateStamped): The current state of the ego vehicle.
+        lanes (List[Lane]): A list of available lanes.
 
     Returns:
-        GoalRegion: A goal region located in front of the observed object.
+        float: The yaw of the nearest lane center point.
+        Vector2D: The position of the nearest lane center point.
     """
-    # Calculate the position of the goal region
-    goal_x = obs_f.state.pos.x + distance_ahead * cos(obs_f.state.yaw)
-    goal_y = obs_f.state.pos.y + distance_ahead * sin(obs_f.state.yaw)
     
-    return GoalRegion(
-        center=Vector2D(x=goal_x, y=goal_y),
-        length=length,
-        width=width,
-        yaw=obs_f.state.yaw,
-        yaw_tolerance=yaw_tolerance,
-        target_velocity=get_magnitude(obs_f.state.velocity),
-        velocity_tolerance=velocity_tolerance
-    )
+    min_dist = float('inf')
+    nearest_point = Vector2D(x=0.0, y=0.0)
+    nearest_lane_yaw = 0.0
+
+    for lane in lanes:
+        for point, yaw in lane.centerline:
+            dist = hypot(ego_state.state.pos.x - point.x, ego_state.state.pos.y - point.y)
+            if dist < min_dist:
+                min_dist = dist
+                nearest_point = point
+                nearest_lane_yaw = yaw
+
+    return nearest_lane_yaw, nearest_point
