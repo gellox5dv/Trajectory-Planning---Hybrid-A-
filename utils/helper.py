@@ -1,7 +1,7 @@
 from math import cos, pi, sin, hypot
 from typing import List, Optional, Tuple
 from configparser import ConfigParser
-from models.models import Vector2D, VehicleParameters, EgoStateStamped
+from models.models import Vector2D, VehicleParameters, EgoStateStamped, Lane
 import copy
 
 
@@ -89,8 +89,13 @@ def load_vehicle_parameters() -> VehicleParameters:
         mu = config.getfloat('vehicle', 'mu')
     )
 
+
 def get_magnitude(vector: Vector2D) -> float:
     return hypot(vector.x, vector.y)
+
+
+def get_vector(magnitude: float, direction: float) -> Vector2D:
+    return Vector2D(x = magnitude * cos(direction), y = magnitude * sin(direction))
 
 
 def shift_rear_axle_to_cg(state_stamped: EgoStateStamped, lr: float) -> EgoStateStamped:
@@ -137,3 +142,31 @@ def shift_cg_to_rear_axle(state_stamped: EgoStateStamped, lr: float) -> EgoState
     new_stamped.state.pos.y -= lr * sin(yaw)
     
     return new_stamped
+
+
+def get_nearest_lane_center(ego_state: EgoStateStamped, lanes: List[Lane]) -> Tuple[float, Vector2D]:
+    """
+    Find the nearest lane center point to the ego vehicle.
+    
+    Args:
+        ego_state (EgoStateStamped): The current state of the ego vehicle.
+        lanes (List[Lane]): A list of available lanes.
+
+    Returns:
+        float: The yaw of the nearest lane center point.
+        Vector2D: The position of the nearest lane center point.
+    """
+    
+    min_dist = float('inf')
+    nearest_point = Vector2D(x=0.0, y=0.0)
+    nearest_lane_yaw = 0.0
+
+    for lane in lanes:
+        for point, yaw in lane.centerline:
+            dist = hypot(ego_state.state.pos.x - point.x, ego_state.state.pos.y - point.y)
+            if dist < min_dist:
+                min_dist = dist
+                nearest_point = point
+                nearest_lane_yaw = yaw
+
+    return nearest_lane_yaw, nearest_point

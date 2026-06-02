@@ -96,8 +96,8 @@ class DynamicObject:
     pos: Vector2D               # position [m]
     yaw: float                  # orientation [rad]
 
-    velocity: float             # velocity (vx, vy) [m/s]
-    acceleration: float         # acceleration (ax, ay) [m/s²]
+    velocity: Vector2D             # velocity (vx, vy) [m/s]
+    acceleration: Vector2D         # acceleration (ax, ay) [m/s²]
 
     width: float                # bounding box width [m]
     length: float               # bounding box length [m]
