@@ -17,14 +17,11 @@ def main(cfg: DictConfig):
         center=Vector2D(x=1800.0, y=2.0),
         length=5.0,
         width=5.0,
-        yaw=0.0,
-        yaw_tolerance=0.1,
-        target_velocity=50.0,
-        velocity_tolerance=5.0
+        yaw=0.0
     )
 
-    HORIZON = 1000
-    DT = 100
+    HORIZON = cfg.planner.horizon
+    DT = cfg.planner.dt
 
     vehicle_params = load_vehicle_parameters()
     goal_reached = False
@@ -45,12 +42,7 @@ def main(cfg: DictConfig):
             start_state=sim.get_ego_state(),
             goal_region=goal_region,
             target_speed=13+8/9,
-            velocity_limit=13+8/9,
-            environment=pred_env,
-            horizon=HORIZON,
-            dt=DT,
-            dt_output=DT,
-            max_compute_time=200
+            environment=pred_env
         )
 
         plan_result = plan(planning_request, cfg)
