@@ -97,10 +97,10 @@ class DynamicBicycleModel:
         self.lf = vehicle_params.front_wheel_base
         self.lr = vehicle_params.rear_wheel_base
 
-        self.Cf = 65715.0
-        self.Cr = 65715.0
+        self.Cf = vehicle_params.Cf
+        self.Cr = vehicle_params.Cr
 
-        self.mu = 1.0
+        self.mu = vehicle_params.mu
         self.g = 9.81
 
         self.max_steer = vehicle_params.max_steer

@@ -1,7 +1,8 @@
 from math import sin, cos
+from typing import List
 from models.models import DynamicObject, DynamicObjectStamped, Vector2D
 
-def predict_motion_constant_velocity(objects: list[DynamicObjectStamped], prediction_horizon: int, dt: int) -> list[DynamicObjectStamped]:
+def predict_motion_constant_velocity(objects: List[DynamicObjectStamped], prediction_horizon: int, dt: int, last_only: bool = False) -> List[DynamicObjectStamped]:
     """
     Predict the future states of dynamic objects using a simple constant velocity model.
     
@@ -9,6 +10,7 @@ def predict_motion_constant_velocity(objects: list[DynamicObjectStamped], predic
         objects: A list of DynamicObjectStamped representing the current states of dynamic objects.
         prediction_horizon: The total time (in milliseconds) for which to predict the motion.
         dt: The time step (in milliseconds) between predictions.
+        last_only: If True, only the last predicted state for each object will be returned.
     
     Returns:
         A list of DynamicObjectStamped representing the predicted future states of the dynamic objects at each time step.
@@ -39,12 +41,15 @@ def predict_motion_constant_velocity(objects: list[DynamicObjectStamped], predic
             )
             predicted_states.append(predicted_state)
         
-        predicted_objects.extend(predicted_states)
+        if last_only:
+            predicted_objects.append(predicted_states[-1])
+        else:
+            predicted_objects.extend(predicted_states)
     
     return predicted_objects
 
 
-def predict_motion_constant_acceleration(objects: list[DynamicObjectStamped], prediction_horizon: int, dt: int) -> list[DynamicObjectStamped]:
+def predict_motion_constant_acceleration(objects: List[DynamicObjectStamped], prediction_horizon: int, dt: int) -> List[DynamicObjectStamped]:
     """
     Predict the future states of dynamic objects using a simple constant acceleration model.
     
