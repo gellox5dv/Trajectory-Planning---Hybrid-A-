@@ -4,6 +4,7 @@ from planner.planner import plan
 from models.models import PlanningRequest, GoalRegion, Vector2D, Trajectory, PredictedEnvironment
 from utils.helper import load_vehicle_parameters
 from motion.motion_prediction import predict_motion_constant_velocity
+from controllers.controllers import MPCController
 
 import hydra
 from omegaconf import DictConfig
@@ -11,7 +12,7 @@ from omegaconf import DictConfig
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig):
-    sim = Simulation()
+    sim = Simulation(cfg)
 
     goal_region = GoalRegion(
         center=Vector2D(x=1800.0, y=2.0),
@@ -20,27 +21,29 @@ def main(cfg: DictConfig):
         yaw=0.0
     )
 
-    HORIZON = cfg.planner.horizon
-    DT = cfg.planner.dt
-
     vehicle_params = load_vehicle_parameters()
     goal_reached = False
     full_trajectory = Trajectory(states=[])
+    controller = MPCController(cfg.vehicle, cfg.controllers.mpc)
 
     while not goal_reached:
 
         curr_env = sim.get_environment()
-        pred_objs = predict_motion_constant_velocity(curr_env.objects, prediction_horizon=HORIZON, dt=DT)
+        pred_objs = predict_motion_constant_velocity(curr_env.objects, prediction_horizon=cfg.planner.horizon, dt=cfg.planner.dt_sim)
         pred_env = PredictedEnvironment(
             objects={obj.state.id: [obj] for obj in pred_objs},
             lanes=curr_env.lanes,
-            dt=DT,
-            horizon=HORIZON
+            dt=cfg.planner.dt_sim,
+            horizon=cfg.planner.horizon
         )
 
         planning_request = PlanningRequest(
             start_state=sim.get_ego_state(),
-            goal_region=goal_region,
+            goal_region=sim.get_goal_region(
+                3000,
+                length=5.0,
+                width=5.0
+            ),
             target_speed=13+8/9,
             environment=pred_env
         )
@@ -48,10 +51,8 @@ def main(cfg: DictConfig):
         plan_result = plan(planning_request, cfg)
 
         if plan_result.success and plan_result.trajectory is not None:
-            # controller recalculates the ego input
-            # simulation applies the steering rate and acceleration
-
-            # full_trajectory.states.extend()# applied trajectory from the simulation)
+            acceleration, steering_rate = controller.compute_control(sim.get_ego_state(), plan_result.trajectory)
+            sim.step(acceleration, steering_rate, cfg.controllers.mpc.dt_sim)
 
             if goal_reached:
                 print("Goal reached!")
