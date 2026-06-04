@@ -145,7 +145,7 @@ class DynamicBicycleModel:
             'steer': ego_state.steering_angle,
         }
     
-    def step(self, acceleration: float, steer_rate: float, dt: int) -> EgoStateStamped:
+    def step(self, acceleration: float, steer_rate: float, dt: int) -> EgoState:
         """
         Advance the vehicle by dt milliseconds.
         """
