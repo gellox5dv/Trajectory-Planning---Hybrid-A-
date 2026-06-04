@@ -1,33 +1,36 @@
 import math
-from models.models import EgoInput, EgoState, Vector2D
+from models.models import EgoInput, EgoState, EgoStateStamped, Vector2D
 from omegaconf import DictConfig
 from utils.helper import get_vector, get_magnitude
 from dataclasses import dataclass
 
 
 def kinematic_bicycle(
-    state: EgoState,
+    stamped_state: EgoStateStamped,
     control: EgoInput,
     dt: int,
     vehicle_params: DictConfig,
-) -> EgoState:
+) -> EgoStateStamped:
     """
     Lightweight kinematic bicycle propagation.
 
     Arguments:
-        state: Current state of the ego vehicle.
+        stamped_state: Current stamped state of the ego vehicle.
         control: Control input for the ego vehicle.
         dt: Time step in milliseconds.
         vehicle_params: Vehicle parameters including max acceleration, deceleration, steering angle, and wheel base.
 
     Returns:
-        EgoState: The next state of the ego vehicle after applying the control input for the given time step.
+        EgoStateStamped: The next stamped state of the ego vehicle with updated timestamp.
     """
-
-    x = state.pos.x
-    y = state.pos.y
-    yaw = state.yaw
-    speed = get_magnitude(state.velocity)
+    
+    # Extract the inner state for easier access
+    current_state = stamped_state.state
+    
+    x = current_state.pos.x
+    y = current_state.pos.y
+    yaw = current_state.yaw
+    speed = get_magnitude(current_state.velocity)
     dt_sec = dt / 1000.0
 
     # 1. Clip inputs
@@ -40,7 +43,7 @@ def kinematic_bicycle(
     # 2. Calculate new speed (clip at 0 to prevent reversing)
     speed_next = max(0.0, speed + accel * dt_sec)
     
-    # Average speed for more precise spatial integration during acceleration
+    # Average speed for more precise position integration during acceleration
     v_avg = (speed + speed_next) / 2.0
 
     # 3. Calculate omega using the CURRENT (new) steering angle and average speed
@@ -65,20 +68,28 @@ def kinematic_bicycle(
     vx_next = speed_next * math.cos(yaw_next)
     vy_next = speed_next * math.sin(yaw_next)
 
-    # 6. Acceleration vector (including centripetal acceleration for accurate prediction models)
+    # 6. Acceleration vector (including centripetal acceleration for correct prediction models)
     # a_long = accel, a_lat = v * omega
     lat_accel = speed_next * omega
     ax_next = accel * math.cos(yaw_next) - lat_accel * math.sin(yaw_next)
     ay_next = accel * math.sin(yaw_next) + lat_accel * math.cos(yaw_next)
 
-    return EgoStateStamped(
+    # 7. Create the new inner state
+    next_state = EgoState(
         pos=Vector2D(x_next, y_next),
         velocity=Vector2D(vx_next, vy_next),
         acceleration=Vector2D(ax_next, ay_next),
         yaw=yaw_next,
         steering_angle=new_steer,
     )
+    
+    # 8. Update the timestamp and return the stamped state wrapper
+    next_timestamp = stamped_state.timestamp + dt
 
+    return EgoStateStamped(
+        timestamp=next_timestamp,
+        state=next_state
+    )
 
 class DynamicBicycleModel:
 
