@@ -59,7 +59,7 @@ def main(cfg: DictConfig):
         
     
     visualize_scene(
-        env=sim.get_environment(),
+        env=sim.get_environment(0.0),
         ego=sim.get_ego_state(0.0),
         vehicle_params=vehicle_params,
         trajectory=full_trajectory
