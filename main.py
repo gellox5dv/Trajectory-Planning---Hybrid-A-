@@ -1,7 +1,7 @@
 from visualization.visualizer import visualize_scene
 from simulation.simulate import Simulation
 from planner.planner import plan
-from models.models import PlanningRequest, GoalRegion, Vector2D, Trajectory, PredictedEnvironment
+from models.models import PlanningRequest, Trajectory, PredictedEnvironment
 from utils.helper import load_vehicle_parameters
 from motion.motion_prediction import predict_motion_constant_velocity
 from controllers.controllers import MPCController
@@ -13,13 +13,6 @@ from omegaconf import DictConfig
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig):
     sim = Simulation(cfg)
-
-    goal_region = GoalRegion(
-        center=Vector2D(x=1800.0, y=2.0),
-        length=5.0,
-        width=5.0,
-        yaw=0.0
-    )
 
     vehicle_params = load_vehicle_parameters()
     goal_reached = False

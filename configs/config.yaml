@@ -4,3 +4,4 @@ defaults:
   - planner: default_planner_config
   - controller: default_controller_config
   - vehicle: renault_twizy
+  - scenario: overtake_scenario

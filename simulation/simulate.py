@@ -1,4 +1,4 @@
-from .environment import environment
+from .environment import create_environment
 from math import hypot, sin, cos, tan
 from omegaconf import DictConfig
 from models.models import EgoStateStamped, EgoState, Environment, Vector2D, GoalRegion, Trajectory
@@ -21,7 +21,7 @@ class Simulation:
             )
         )
 
-        self.curr_env = environment
+        self.curr_env = create_environment(cfg.scenario)
         self.bicycle_model = DynamicBicycleModel(self.ego_state.state, cfg.vehicle)
 
         self.ego_history = [self.ego_state]
