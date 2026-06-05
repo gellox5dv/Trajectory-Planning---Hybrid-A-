@@ -37,3 +37,9 @@ objects:
       y: 6.0              # meters
     yaw: 180.0            # degrees
     speed_kmh: 50.0       # km/h
+
+
+goal:
+  horizon: 3000           # milliseconds
+  length: 5.0             # meters
+  width: 5.0              # meters
