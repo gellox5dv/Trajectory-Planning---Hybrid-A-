@@ -1,7 +1,7 @@
 from math import cos, pi, sin, hypot
 from typing import List, Optional, Tuple
 from configparser import ConfigParser
-from models.models import Vector2D, VehicleParameters, EgoStateStamped, Lane
+from models.models import Vector2D, VehicleParameters, EgoStateStamped, Lane, GoalRegion
 import copy
 
 
@@ -170,3 +170,42 @@ def get_nearest_lane_center(ego_state: EgoStateStamped, lanes: List[Lane]) -> Tu
                 nearest_lane_yaw = yaw
 
     return nearest_lane_yaw, nearest_point
+
+
+def get_goal_region(
+        curr_ego_state: EgoStateStamped,
+        lanes: List[Lane],
+        horizon: int,
+        length: float,
+        width: float,
+    ) -> GoalRegion:
+    """
+    Get the goal region which is horizon seconds ahead in the same lane as the ego vehicle.
+
+    Args:
+        curr_ego_state (EgoStateStamped): The current state of the ego vehicle.
+        lanes (List[Lane]): A list of available lanes.
+        horizon (float): The time horizon to look ahead [ms].
+        length (float): The length of the goal region [m].
+        width (float): The width of the goal region [m].
+
+    Returns:
+        GoalRegion: The computed goal region.
+    """
+
+    nearest_lane_yaw, nearest_lane_center = get_nearest_lane_center(curr_ego_state, lanes)
+
+    curr_vel = curr_ego_state.state.velocity
+    curr_vel_magnitude = hypot(curr_vel.x, curr_vel.y)
+
+    distance_ahead = curr_vel_magnitude * horizon / 1000.0
+
+    goal_center_x = nearest_lane_center.x + distance_ahead * cos(nearest_lane_yaw)
+    goal_center_y = nearest_lane_center.y + distance_ahead * sin(nearest_lane_yaw)
+
+    return GoalRegion(
+        center=Vector2D(x=goal_center_x, y=goal_center_y),
+        length=length,
+        width=width,
+        yaw=nearest_lane_yaw
+    )
