@@ -43,19 +43,19 @@ class MPCController:
         self.max_delta_rate = vehicle_params.max_steer_rate
 
         # tracking weights
-        self.Qx = controller_cfg.get("Qx", 5.0)
-        self.Qy = controller_cfg.get("Qy", 5.0)
-        self.Qyaw = controller_cfg.get("Qyaw", 10.0)
-        self.Qv = controller_cfg.get("Qv", 1.0)
-        self.Qdelta = controller_cfg.get("Qdelta", 0.1)
+        self.Qx = controller_cfg.get("Q_x", 5.0)
+        self.Qy = controller_cfg.get("Q_y", 5.0)
+        self.Qyaw = controller_cfg.get("Q_yaw", 10.0)
+        self.Qv = controller_cfg.get("Q_v", 1.0)
+        self.Qdelta = controller_cfg.get("Q_delta", 0.1)
 
         # control effort
-        self.Ra = controller_cfg.get("Ra", 0.1)
-        self.Rsr = controller_cfg.get("Rsr", 0.1)
+        self.Ra = controller_cfg.get("R_a", 0.1)
+        self.Rsr = controller_cfg.get("R_sr", 0.1)
 
         # input rate penalties
-        self.Rda = controller_cfg.get("Rda", 1.0)
-        self.Rdsr = controller_cfg.get("Rdsr", 1.0)
+        self.Rda = controller_cfg.get("R_da", 1.0)
+        self.Rdsr = controller_cfg.get("R_dsr", 1.0)
 
         self._build_solver()
 
