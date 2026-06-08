@@ -64,3 +64,6 @@ def main(cfg: DictConfig):
         vehicle_params=vehicle_params,
         trajectory=full_trajectory
     )
+
+if __name__ == "__main__":
+    main()

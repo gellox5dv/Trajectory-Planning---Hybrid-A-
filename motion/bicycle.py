@@ -91,11 +91,11 @@ class DynamicBicycleModel:
         """
 
         # Vehicle parameters
-        self.m = vehicle_params.mass
-        self.Iz = vehicle_params.moment_of_inertia
+        self.m = vehicle_params.m
+        self.Iz = vehicle_params.Iz
 
-        self.lf = vehicle_params.front_wheel_base
-        self.lr = vehicle_params.rear_wheel_base
+        self.lf = vehicle_params.lf
+        self.lr = vehicle_params.lr
 
         self.Cf = vehicle_params.Cf
         self.Cr = vehicle_params.Cr
