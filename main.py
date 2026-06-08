@@ -2,7 +2,7 @@ from visualization.visualizer import visualize_scene
 from simulation.simulate import Simulation
 from planner.planner import plan
 from models.models import PlanningRequest, Trajectory, PredictedEnvironment
-from utils.helper import load_vehicle_parameters, get_goal_region
+from utils.helper import get_goal_region
 from motion.motion_prediction import predict_motion_constant_velocity
 from controllers.controllers import MPCController
 
@@ -14,10 +14,9 @@ from omegaconf import DictConfig
 def main(cfg: DictConfig):
     sim = Simulation(cfg)
 
-    vehicle_params = load_vehicle_parameters()
     goal_reached = False
     full_trajectory = Trajectory(states=[])
-    controller = MPCController(cfg.vehicle, cfg.controllers.mpc)
+    controller = MPCController(cfg.vehicle, cfg.controller.mpc)
 
     while not goal_reached:
 
@@ -35,9 +34,9 @@ def main(cfg: DictConfig):
             goal_region=get_goal_region(
                 curr_ego_state=sim.get_ego_state(),
                 lanes=curr_env.lanes,
-                horizon=cfg.goal.horizon,
-                length=cfg.goal.length,
-                width=cfg.goal.width
+                horizon=cfg.scenario.goal.horizon,
+                length=cfg.scenario.goal.length,
+                width=cfg.scenario.goal.width
             ),
             target_speed=13+8/9,
             environment=pred_env
@@ -47,7 +46,7 @@ def main(cfg: DictConfig):
 
         if plan_result.success and plan_result.trajectory is not None:
             acceleration, steering_rate = controller.compute_control(sim.get_ego_state(), plan_result.trajectory)
-            sim.step(acceleration, steering_rate, cfg.controllers.mpc.dt_sim)
+            sim.step(acceleration, steering_rate, cfg.controller.mpc.dt)
 
             if goal_reached:
                 print("Goal reached!")
@@ -61,7 +60,7 @@ def main(cfg: DictConfig):
     visualize_scene(
         env=sim.get_environment(0.0),
         ego=sim.get_ego_state(0.0),
-        vehicle_params=vehicle_params,
+        vehicle_params=cfg.vehicle,
         trajectory=full_trajectory
     )
 

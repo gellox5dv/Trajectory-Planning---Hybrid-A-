@@ -33,8 +33,8 @@ class MPCController:
 
         self.L = vehicle_params.wheel_base
 
-        self.dt = controller_cfg.dt_sim / 1000.0
-        self.N = int(math.ceil(controller_cfg.horizon / controller_cfg.dt_sim))
+        self.dt = controller_cfg.dt / 1000.0
+        self.N = int(math.ceil(controller_cfg.horizon / controller_cfg.dt))
 
         self.max_acc = vehicle_params.max_acceleration
         self.max_dec = -abs(vehicle_params.max_deceleration)
