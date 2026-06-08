@@ -37,6 +37,7 @@ def visualize_scene(env, ego, vehicle_params, trajectory=None) -> None:
     _ax.set_xlabel("x [m]")
     _ax.set_ylabel("y [m]")
     _ax.set_aspect("equal", adjustable="box")  # equal scale on both axes
+    _ax.set_facecolor("#d9d9d9")
     _ax.grid(True)
     _ax.legend(loc="upper left", fontsize=8)
 
@@ -68,36 +69,73 @@ def _get_traj_state(state_entry):
 
 def _draw_lanes(ax, env) -> None:
     """
-    Draw lane centerlines (dashed) and boundaries (solid white).
-    Lane.centerline is List[Tuple[Vector2D, float]]: each entry is (point, tangent_angle).
-    Lane boundaries are offset ± width/2 perpendicular to the tangent.
+    Draw lanes as filled road strips with solid borders and dashed centerlines.
+    Lane.centerline is List[Tuple[Vector2D, float]]:
+    each entry is (point, tangent_angle).
     """
     if env is None or not hasattr(env, "lanes") or env.lanes is None:
         return
 
-    for lane in env.lanes:
+    for i, lane in enumerate(env.lanes):
         if not hasattr(lane, "centerline") or not lane.centerline:
             continue
 
-        # unpack (Vector2D, tangent_angle) tuples
-        pts      = [p[0] for p in lane.centerline]
+        pts = [p[0] for p in lane.centerline]
         tangents = [p[1] for p in lane.centerline]
 
         xs = [p.x for p in pts]
         ys = [p.y for p in pts]
 
-        # dashed centerline
-        ax.plot(xs, ys, linestyle="--", linewidth=1.0, color="gray")
+        half_w = lane.width / 2.0
 
-        # lane boundaries: offset perpendicular to tangent by ± half width
-        half_w = lane.width / 2
-        left_xs  = [p.x - half_w * math.sin(t) for p, t in zip(pts, tangents)]
-        left_ys  = [p.y + half_w * math.cos(t) for p, t in zip(pts, tangents)]
+        left_xs = [p.x - half_w * math.sin(t) for p, t in zip(pts, tangents)]
+        left_ys = [p.y + half_w * math.cos(t) for p, t in zip(pts, tangents)]
         right_xs = [p.x + half_w * math.sin(t) for p, t in zip(pts, tangents)]
         right_ys = [p.y - half_w * math.cos(t) for p, t in zip(pts, tangents)]
 
-        ax.plot(left_xs,  left_ys,  linewidth=1.0, color="white")
-        ax.plot(right_xs, right_ys, linewidth=1.0, color="white")
+        poly_x = left_xs + right_xs[::-1]
+        poly_y = left_ys + right_ys[::-1]
+
+        ax.fill(
+            poly_x,
+            poly_y,
+            color="#4a4a4a",
+            alpha=0.35,
+            zorder=0,
+        )
+
+        border_label = "Lane boundary" if i == 0 else None
+        center_label = "Lane centerline" if i == 0 else None
+
+        ax.plot(
+            left_xs,
+            left_ys,
+            color="black",
+            linewidth=2.2,
+            solid_capstyle="round",
+            zorder=1,
+            label=border_label,
+        )
+
+        ax.plot(
+            right_xs,
+            right_ys,
+            color="black",
+            linewidth=2.2,
+            solid_capstyle="round",
+            zorder=1,
+        )
+
+        ax.plot(
+            xs,
+            ys,
+            color="white",
+            linewidth=1.4,
+            linestyle=(0, (6, 6)),
+            dash_capstyle="round",
+            zorder=2,
+            label=center_label,
+        )
 
 
 def _draw_objects(ax, env) -> None:
