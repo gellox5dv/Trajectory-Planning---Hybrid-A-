@@ -1,6 +1,6 @@
 from models.models import *
 from anytree import NodeMixin
-from motion_primitives import MotionPrimitive
+from planner.motion_primitives import MotionPrimitive
 
 
 class StateNode(NodeMixin):

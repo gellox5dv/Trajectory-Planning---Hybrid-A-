@@ -1,0 +1,9 @@
+# Hydra Outputs
+outputs/
+multirun/
+*.pyc
+remove_cache.py
+test.*
+test2.*
+.vscode/
+.gitignore

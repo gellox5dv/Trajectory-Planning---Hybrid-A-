@@ -1,10 +1,11 @@
 from models.models import *
 from anytree import NodeMixin
 from anytree.search import findall
-from motion_primitives import MotionPrimitive
-from motion_primitives import get_motion_primitives
-from state_node import StateNode
+from planner.motion_primitives import MotionPrimitive
+from planner.motion_primitives import get_motion_primitives
+from planner.state_node import StateNode
 from shapely.geometry import Polygon
+from motion.bicycle import kinematic_bicycle
 import heapq
 import math
 from omegaconf import DictConfig, OmegaConf
@@ -108,9 +109,11 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
         # Expand the current node using the generated primitives
         for mp in motion_primitives:
             
-            # TODO: Propagate state using the bicycle model
-            # curr_state = bicycle_model(prev_stamped_state, mp, cfg.planner.dt_sim)
-            curr_state = prev_stamped_state
+            # Propagate state using the bicycle model
+            curr_state = kinematic_bicycle(stamped_state=prev_stamped_state, 
+                                           control=EgoInput(mp.steering_angle,mp.acceleration), 
+                                           dt=mp.dt, 
+                                           vehicle_params=cfg.vehicle)
             
             # Accumulated cost up to the start of this new edge
             path_cost = prev_node.path_cost + prev_node.node_cost
