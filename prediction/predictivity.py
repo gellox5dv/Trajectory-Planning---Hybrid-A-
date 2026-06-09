@@ -71,10 +71,10 @@ def _predict_constant_acceleration_step(
     Predict one step from t=0 and clamp braking objects exactly at their stop point.
 
     Constant acceleration kinematic equations:
-        x(t)  = x0 + vx0·t + 0.5·ax·t²
-        y(t)  = y0 + vy0·t + 0.5·ay·t²
-        vx(t) = vx0 + ax·t
-        vy(t) = vy0 + ay·t
+        x(t)  = x0 + vx0*t + 0.5*ax*t^2
+        y(t)  = y0 + vy0*t + 0.5*ay*t^2
+        vx(t) = vx0 + ax*t
+        vy(t) = vy0 + ay*t
 
     Stop-time derivation (dot product form):
         The object decelerates when dot(v, a) < 0.
