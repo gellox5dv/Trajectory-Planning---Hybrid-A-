@@ -113,7 +113,7 @@ OVERTAKE_PHASES = [
     (1.0,   0.0),   # Complete:  straighten up
 ]
 
-
+"""""
 #  ─ VISUALIZER ─
 
 class Visualizer:
@@ -388,11 +388,11 @@ class Vehicle:
         self._phase_elapsed  = 0.0     # how long we have been in this phase
 
     def _get_target_steer(self, dt: float) -> float:
-        """
+        
         Reads OVERTAKE_PHASES and returns the target steering angle
         for the current moment in time.
 
-        """
+        
         # Advance phase timer
         self._phase_elapsed += dt
 
@@ -408,9 +408,9 @@ class Vehicle:
         return math.radians(target_deg)
 
     def Motion_control(self, dt: float = 0.05):
-        """
+        
         P controller tracking the overtake phase target steering angle.
-        """
+        
         target_steer = self._get_target_steer(dt)
         diff         = target_steer - self.state.steer
         steer_rate   = np.clip(diff / dt,
@@ -436,7 +436,7 @@ class Vehicle:
             f"v={s.v:.2f} m/s  "
             f"β={math.degrees(s.beta):.3f}°"
         )
-
+"""
 
 #  ─ DYNAMIC BICYCLE MODEL ─
 
@@ -488,7 +488,7 @@ class DynamicBicycleModel:
         next_state.timestamp = state.timestamp + dt
         return next_state
 
-
+"""
 #  ─ MAIN ─
 
 if __name__ == '__main__':
@@ -506,3 +506,4 @@ if __name__ == '__main__':
             ego.Print_ego()
 
     ego.viz.show()
+"""
