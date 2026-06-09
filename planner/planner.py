@@ -75,7 +75,7 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
         total_cost=0.0,
         detailed_costs=None,
         goal_region_reached=False,
-        depth=0,
+         node_depth=0,
         parent=None
     )
     
@@ -103,7 +103,8 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
             veh_cfg=cfg.vehicle,
             velocity_limit=request.target_speed,
             acceleration=get_magnitude(prev_stamped_state.state.acceleration),
-            mp_cfg=cfg.motion_primitives
+            mp_cfg=cfg.motion_primitives,
+            internal_dt=cfg.planner.dt_sim
         )
         
         # Expand the current node using the generated primitives
@@ -157,13 +158,13 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
                 total_cost=total_cost,
                 detailed_costs=detailed_costs,
                 goal_region_reached=goal_region_reached,
-                depth=prev_node.depth + 1,
+                node_depth=prev_node.node_depth + 1,
                 parent=prev_node,
                 motion_primitive=mp
             )
             
             # Sort the node into the appropriate queue based on termination conditions
-            if not new_node.goal_region_reached and new_node.depth < max_depth:
+            if not new_node.goal_region_reached and new_node.node_depth < max_depth:
                 heapq.heappush(open_nodes_pq, new_node)
             else:
                 # Goal reached or max depth exceeded; consider this an end node

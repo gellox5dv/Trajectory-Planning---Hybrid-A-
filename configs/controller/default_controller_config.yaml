@@ -1,13 +1,13 @@
 # MPC tuning
-mpc:
-  horizon: 1000
-  dt: 100
-  Q_x: 5.0
-  Q_y: 5.0
-  Q_yaw: 5.0
-  Q_v: 1.0
-  Q_delta: 0.1
-  R_a: 0.01
-  R_sr: 0.001
-  R_da: 1.0
-  R_dsr: 1.0
+
+horizon: 1000
+dt: 100
+Q_x: 5.0
+Q_y: 5.0
+Q_yaw: 5.0
+Q_v: 1.0
+Q_delta: 0.1
+R_a: 0.01
+R_sr: 0.001
+R_da: 1.0
+R_dsr: 1.0
