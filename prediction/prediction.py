@@ -9,7 +9,6 @@ if __package__ is None or __package__ == "":
 from models.models import (
     DynamicObject,
     DynamicObjectStamped,
-    EgoState,
     EgoStateStamped,
     Environment,
     PredictedEnvironment,
@@ -24,7 +23,6 @@ _YAW_RATE_MIN: float = 1e-4  # [rad/s]
 # Guard for near-zero acceleration norm in braking clamp.
 _ACCEL_NORM_SQ_MIN: float = 1e-9
 
-
 # Main role: check that the prediction horizon and time step can produce a valid timestamp grid.
 def _validate_prediction_inputs(prediction_horizon: int, dt: int) -> None:
     """Validate prediction timing inputs, both expressed in milliseconds."""
@@ -36,7 +34,6 @@ def _validate_prediction_inputs(prediction_horizon: int, dt: int) -> None:
         raise ValueError(
             f"prediction_horizon ({prediction_horizon}) must be divisible by dt ({dt})"
         )
-
 
 # Main role: convert scalar speed/acceleration into x and y components using the object's yaw.
 def _vector_from_motion(value, yaw: float) -> Vector2D:
@@ -51,7 +48,6 @@ def _vector_from_motion(value, yaw: float) -> Vector2D:
         return value
     return Vector2D(x=float(value) * math.cos(yaw), y=float(value) * math.sin(yaw))
 
-
 # Main role: convert vector velocity back into one scalar speed value.
 def _speed_from_velocity(velocity) -> float:
     """
@@ -63,7 +59,6 @@ def _speed_from_velocity(velocity) -> float:
     if isinstance(velocity, Vector2D):
         return math.hypot(velocity.x, velocity.y)
     return abs(float(velocity))
-
 
 # Main role: predict one future position/velocity using constant acceleration and stop clamping.
 def _predict_constant_acceleration_step(
@@ -111,7 +106,6 @@ def _predict_constant_acceleration_step(
     )
     return new_pos, new_velocity
 
-
 # Main role: predict one future position/yaw using the CTRV model.
 def _predict_ctrv_step(
     position: Vector2D,
@@ -144,11 +138,12 @@ def _predict_ctrv_step(
     time_s    : prediction time from t=0 [s]
 
     Returns
-    
+
     new_pos   : predicted position in global frame [m]
     new_yaw   : predicted heading [rad]
 
-    Note: speed is held constant (no longitudinal acceleration). For a turning + braking vehicle, combine this with a longitudinal speed profile (future extension).
+    Note: speed is held constant (no longitudinal acceleration). For a turning + braking vehicle, combine this with
+                                                                 a longitudinal speed profile (future extension).
     """
     if abs(yaw_rate) >= _YAW_RATE_MIN:
         new_yaw = yaw + yaw_rate * time_s
@@ -167,7 +162,6 @@ def _predict_ctrv_step(
 
     return new_pos, new_yaw
 
-
 # Main role: compare two headings correctly even when angles wrap around +pi/-pi.
 def _angle_difference(a: float, b: float) -> float:
     """
@@ -177,7 +171,6 @@ def _angle_difference(a: float, b: float) -> float:
         delta = (a - b + pi) mod (2·pi) - pi
     """
     return (a - b + math.pi) % (2 * math.pi) - math.pi
-
 
 # Main role: express an object's position in the ego vehicle's local coordinate frame.
 def _object_relative_to_ego(obj: DynamicObjectStamped, ego_state: EgoStateStamped) -> Vector2D:
@@ -205,7 +198,6 @@ def predict_motion_constant_acceleration(
     objects: List[DynamicObjectStamped],  # current dynamic objects from Environment.objects
     prediction_horizon: int,              # total prediction time [ms]
     dt: int,                              # prediction step size [ms]
-    last_only: bool = False,              # return only final state per object if True
 ) -> List[DynamicObjectStamped]:
     """
     Predict object motion over the horizon using constant acceleration.
@@ -220,7 +212,6 @@ def predict_motion_constant_acceleration(
         cs = obj.state
         velocity = _vector_from_motion(cs.velocity, cs.yaw)          # initial velocity [m/s]
         acceleration = _vector_from_motion(cs.acceleration, cs.yaw)  # constant acceleration [m/s²]
-        predicted_states = []
 
         for t in range(0, prediction_horizon + dt, dt):
             time_s = t / 1000.0
@@ -230,7 +221,7 @@ def predict_motion_constant_acceleration(
                 acceleration=acceleration,
                 time_s=time_s,
             )
-            predicted_states.append(
+            predicted_objects.append(
                 DynamicObjectStamped(
                     timestamp=obj.timestamp + t,
                     state=DynamicObject(
@@ -242,13 +233,7 @@ def predict_motion_constant_acceleration(
                 )
             )
 
-        if last_only:
-            predicted_objects.append(predicted_states[-1])
-        else:
-            predicted_objects.extend(predicted_states)
-
     return predicted_objects
-
 
 # Main role: generate future states using CTRV for objects that are turning.
 def predict_constant_turn(
@@ -256,7 +241,6 @@ def predict_constant_turn(
     prediction_horizon: int,              # total prediction time [ms]
     dt: int,                              # prediction step size [ms]
     yaw_rates: Optional[Dict[int, float]] = None,  # object_id -> yaw_rate [rad/s]; 0 if absent
-    last_only: bool = False,              # return only final state per object if True
 ) -> List[DynamicObjectStamped]:
     """
     Predict object motion over the horizon using the CTRV model.
@@ -275,12 +259,11 @@ def predict_constant_turn(
     before calling this function.
 
     Parameters
-    
+
     objects           : list of stamped dynamic objects at t=0
     prediction_horizon: total time to predict [ms]
     dt                : step size [ms]
     yaw_rates         : optional dict mapping object id to yaw_rate [rad/s]
-    last_only         : if True, return only the final predicted state per object
     """
     _validate_prediction_inputs(prediction_horizon, dt)
 
@@ -293,7 +276,6 @@ def predict_constant_turn(
         cs = obj.state
         speed = _speed_from_velocity(cs.velocity)
         yaw_rate = yaw_rates.get(cs.id, 0.0)
-        predicted_states = []
 
         for t in range(0, prediction_horizon + dt, dt):
             time_s = t / 1000.0
@@ -309,7 +291,7 @@ def predict_constant_turn(
                 x=speed * math.cos(new_yaw),
                 y=speed * math.sin(new_yaw),
             )
-            predicted_states.append(
+            predicted_objects.append(
                 DynamicObjectStamped(
                     timestamp=obj.timestamp + t,
                     state=DynamicObject(
@@ -322,14 +304,9 @@ def predict_constant_turn(
                 )
             )
 
-        if last_only:
-            predicted_objects.append(predicted_states[-1])
-        else:
-            predicted_objects.extend(predicted_states)
-
     return predicted_objects
 
-# Grouping and environment
+# Environment predictions
 
 # Main role: reorganize flat predictions into object_id -> list of predicted states.
 def group_predictions_by_object(
@@ -340,7 +317,6 @@ def group_predictions_by_object(
     for obj in predicted_objects:
         grouped.setdefault(obj.state.id, []).append(obj)
     return grouped
-
 
 # Main role: build a PredictedEnvironment from the current Environment.
 def predict_environment(
@@ -383,8 +359,6 @@ def predict_environment(
         horizon=prediction_horizon,
     )
 
-# Lookup utilities
-
 # Main role: retrieve all predicted objects at one exact timestamp.
 def objects_at_time(
     predicted_environment: PredictedEnvironment,
@@ -396,19 +370,11 @@ def objects_at_time(
         result.extend(obj for obj in preds if obj.timestamp == timestamp)
     return result
 
-
 # Main role: compute straight-line distance between two 2D points.
 def point_distance(x1: float, y1: float, x2: float, y2: float) -> float:
     """Euclidean distance between two points."""
     return math.hypot(x2 - x1, y2 - y1)
 
-
-# Main role: return the scalar speed of one predicted object.
-def object_speed(obj: DynamicObjectStamped) -> float:
-    """Return predicted object speed [m/s]."""
-    return _speed_from_velocity(obj.state.velocity)
-
-# Scene understanding
 
 # Main role: find the closest vehicle ahead of ego in the same lane.
 def find_lead_vehicle(
@@ -430,7 +396,6 @@ def find_lead_vehicle(
         if 0.0 < rel.x <= max_lookahead_m and abs(rel.y) <= lane_y_tolerance:
             candidates.append((rel.x, obj))
     return min(candidates, key=lambda item: item[0])[1] if candidates else None
-
 
 # Main role: find the closest vehicle ahead of ego that is driving in the opposite direction.
 def find_oncoming_vehicle(
@@ -460,7 +425,7 @@ def find_oncoming_vehicle(
             candidates.append((rel.x, obj))
     return min(candidates, key=lambda item: item[0])[1] if candidates else None
 
-# Overtake-specific prediction
+# Overtake specific prediction
 
 # Main role: predict only the lead and oncoming vehicles needed for an overtake decision.
 def predict_overtake_environment(
@@ -491,8 +456,7 @@ def predict_overtake_environment(
         yaw_rates=yaw_rates,
     )
 
-
-# Main role: decide if non-lead traffic has passed behind ego by the required safety distance.
+# Main role: verify if the opposite vehicle has passed behind ego by the required safety distance.
 def is_overtake_gap_safe(
     predicted_environment: PredictedEnvironment,
     ego_trajectory: List[EgoStateStamped],
@@ -505,13 +469,13 @@ def is_overtake_gap_safe(
     Return True only if oncoming vehicles stay farther than safety_distance
     from ego throughout the entire overtake window.
 
-    The lead vehicle is excluded by id — proximity to it is expected
+    The lead vehicle is excluded by id. Proximity to it is expected
     during overtake and is managed by the lateral planner.
 
     ego_trajectory must contain a state for every timestamp in the window
     at the same dt as predicted_environment, otherwise a ValueError is raised.
 
-    This is a prediction-level gap check. The planner must still produce
+    This is a prediction level gap check. The planner must still produce
     and collision-check the actual ego trajectory.
     """
     end_ms = overtake_start_ms + overtake_duration_ms
@@ -533,5 +497,4 @@ def is_overtake_gap_safe(
             )
             if dist < safety_distance:
                 return False
-
     return True
