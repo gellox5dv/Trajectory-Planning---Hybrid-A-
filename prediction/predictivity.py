@@ -16,6 +16,8 @@ from models.models import (
     Vector2D,
 )
 
+_YAW_RATE_MIN = 1e-9  # below this, treat turn rate as straight-line motion
+
 """
 Scenario
   - Ego vehicle drives east at 10 m/s.
@@ -109,6 +111,46 @@ def _predict_constant_acceleration_step(
     return new_pos, new_velocity
 
 
+# Main role: predict one future position/velocity using constant speed and constant yaw rate.
+def _predict_constant_turn_step(
+    position: Vector2D,
+    speed: float,
+    yaw: float,
+    yaw_rate: float,
+    time_s: float,
+) -> tuple[Vector2D, float, Vector2D]:
+    """
+    Predict one step using a constant turn-rate and velocity model.
+
+    Constant turn equations:
+        yaw(t) = yaw0 + yaw_rate * t
+        x(t)   = x0 + v/yaw_rate * (sin(yaw(t)) - sin(yaw0))
+        y(t)   = y0 - v/yaw_rate * (cos(yaw(t)) - cos(yaw0))
+
+    Straight-line fallback when yaw_rate is close to zero:
+        x(t) = x0 + v*cos(yaw0)*t
+        y(t) = y0 + v*sin(yaw0)*t
+    """
+    if abs(yaw_rate) < _YAW_RATE_MIN:
+        new_yaw = yaw
+        new_pos = Vector2D(
+            x=position.x + speed * math.cos(yaw) * time_s,
+            y=position.y + speed * math.sin(yaw) * time_s,
+        )
+    else:
+        new_yaw = yaw + yaw_rate * time_s
+        new_pos = Vector2D(
+            x=position.x + speed / yaw_rate * (math.sin(new_yaw) - math.sin(yaw)),
+            y=position.y - speed / yaw_rate * (math.cos(new_yaw) - math.cos(yaw)),
+        )
+
+    new_velocity = Vector2D(
+        x=speed * math.cos(new_yaw),
+        y=speed * math.sin(new_yaw),
+    )
+    return new_pos, new_yaw, new_velocity
+
+
 # Main role: compare two headings correctly even when angles wrap around +pi/-pi.
 def _angle_difference(a: float, b: float) -> float:
     """
@@ -185,6 +227,55 @@ def predict_motion_constant_acceleration(
 
     return predicted_objects
 
+# Main role: generate future curved states for every object over the prediction horizon.
+def predict_motion_constant_turn(
+    objects: List[DynamicObjectStamped],       # current dynamic objects from Environment.objects
+    prediction_horizon: int,                   # total prediction time [ms]
+    dt: int,                                   # prediction step size [ms]
+    yaw_rate: float = 0.0,                     # constant turn rate [rad/s]
+    object_yaw_rates: Optional[Dict[int, float]] = None,  # optional per-object turn rates [rad/s]
+    last_only: bool = False,                   # return only final state per object if True
+) -> List[DynamicObjectStamped]:
+    """Predict object motion over the horizon using constant speed and constant turn rate."""
+    _validate_prediction_inputs(prediction_horizon, dt)
+    predicted_objects: List[DynamicObjectStamped] = []
+    object_yaw_rates = object_yaw_rates or {}
+
+    for obj in objects:
+        cs = obj.state
+        speed = _speed_from_velocity(cs.velocity)
+        obj_yaw_rate = object_yaw_rates.get(cs.id, yaw_rate)
+        predicted_states = []
+
+        for t in range(0, prediction_horizon + dt, dt):
+            time_s = t / 1000.0
+            new_pos, new_yaw, new_velocity = _predict_constant_turn_step(
+                position=cs.pos,
+                speed=speed,
+                yaw=cs.yaw,
+                yaw_rate=obj_yaw_rate,
+                time_s=time_s,
+            )
+
+            predicted_states.append(
+                DynamicObjectStamped(
+                    timestamp=obj.timestamp + t,
+                    state=DynamicObject(
+                        id=cs.id, obj_class=cs.obj_class,
+                        pos=new_pos, yaw=new_yaw,
+                        velocity=new_velocity, acceleration=cs.acceleration,
+                        width=cs.width, length=cs.length,
+                    ),
+                )
+            )
+
+        if last_only:
+            predicted_objects.append(predicted_states[-1])
+        else:
+            predicted_objects.extend(predicted_states)
+
+    return predicted_objects
+
 # Main role: reorganize flat predictions into object_id -> list of predicted states.
 def group_predictions_by_object(
     predicted_objects: List[DynamicObjectStamped],  # flat list of predictions for all objects
@@ -200,12 +291,25 @@ def predict_environment(
     environment: Environment,                 # current scene with dynamic objects and lanes
     prediction_horizon: int,                  # total prediction time [ms]
     dt: int,                                  # prediction step size [ms]
-    model: str = "constant_acceleration",     # kept for future model selection
+    model: str = "constant_acceleration",     # prediction model name
+    yaw_rate: float = 0.0,                    # used only by constant_turn [rad/s]
+    object_yaw_rates: Optional[Dict[int, float]] = None,  # per-object yaw rates for constant_turn
 ) -> PredictedEnvironment:
     """Predict every object in the environment and return PredictedEnvironment."""
     if not environment.objects:
         raise ValueError("Empty object list — prediction would be vacuously safe.")
-    raw = predict_motion_constant_acceleration(environment.objects, prediction_horizon, dt)
+    if model == "constant_acceleration":
+        raw = predict_motion_constant_acceleration(environment.objects, prediction_horizon, dt)
+    elif model == "constant_turn":
+        raw = predict_motion_constant_turn(
+            environment.objects,
+            prediction_horizon,
+            dt,
+            yaw_rate=yaw_rate,
+            object_yaw_rates=object_yaw_rates,
+        )
+    else:
+        raise ValueError(f"Unknown prediction model: {model}")
     return PredictedEnvironment(
         objects=group_predictions_by_object(raw),
         lanes=environment.lanes,
@@ -269,6 +373,9 @@ def predict_overtake_environment(
     ego_state: EgoStateStamped,      # ego pose used to select relevant vehicles
     prediction_horizon: int,         # total prediction time [ms]
     dt: int,                         # prediction step size [ms]
+    model: str = "constant_acceleration",  # prediction model name
+    yaw_rate: float = 0.0,           # used only by constant_turn [rad/s]
+    object_yaw_rates: Optional[Dict[int, float]] = None,  # per-object yaw rates for constant_turn
 ) -> PredictedEnvironment:
     """Predict only the lead and oncoming vehicles relevant to overtaking."""
     lead = find_lead_vehicle(environment, ego_state)
@@ -280,6 +387,9 @@ def predict_overtake_environment(
         Environment(objects=relevant, lanes=environment.lanes),
         prediction_horizon=prediction_horizon,
         dt=dt,
+        model=model,
+        yaw_rate=yaw_rate,
+        object_yaw_rates=object_yaw_rates,
     )
 
 # Main role: decide if non-lead traffic has passed behind ego by the required safety distance.
