@@ -7,7 +7,7 @@ import matplotlib.patches as patches
 import matplotlib.transforms as transforms
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict
-
+import hydra
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -407,7 +407,7 @@ class Vehicle:
         target_deg = OVERTAKE_PHASES[self._phase_index][1]
         return math.radians(target_deg)
 
-    def Motion_control(self, dt: float = 0.05): #######
+    def Motion_control(self, dt: float = 0.05):
         """
         P controller tracking the overtake phase target steering angle.
         """

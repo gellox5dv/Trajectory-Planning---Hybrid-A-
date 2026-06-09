@@ -1,0 +1,633 @@
+import math
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional
+
+if __package__ is None or __package__ == "":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from models.models import (
+    DynamicObject,
+    DynamicObjectStamped,
+    EgoState,
+    EgoStateStamped,
+    Environment,
+    PredictedEnvironment,
+    Vector2D,
+)
+
+"""
+Scenario
+  - Ego vehicle drives east at 10 m/s.
+  - Lead vehicle is 40 m ahead of ego, also going east, but braking hard
+    at -4 m/s² (it will stop before the prediction horizon ends).
+  - Oncoming vehicle is 120 m ahead of ego, heading west at 12 m/s.
+We run two sub-scenarios:
+  A. Oncoming vehicle is far enough → overtake is SAFE.
+  B. Oncoming vehicle is close      → overtake is NOT SAFE.
+"""
+
+# Main role: check that the prediction horizon and time step can produce a valid timestamp grid.
+def _validate_prediction_inputs(prediction_horizon: int, dt: int) -> None:
+    """Validate prediction timing inputs, both expressed in milliseconds."""
+    if prediction_horizon < 0:
+        raise ValueError("prediction_horizon must be >= 0")
+    if dt <= 0:
+        raise ValueError("dt must be > 0")
+    if prediction_horizon % dt != 0:
+        raise ValueError(
+            f"prediction_horizon ({prediction_horizon}) must be divisible by dt ({dt})"
+        )
+
+
+# Main role: convert scalar speed/acceleration into x and y components using the object's yaw.
+def _vector_from_motion(value, yaw: float) -> Vector2D:
+    """
+    Convert scalar longitudinal motion or Vector2D motion into x/y components.
+
+    Equations:
+        vx = v * cos(yaw)
+        vy = v * sin(yaw)
+    """
+    if isinstance(value, Vector2D):
+        return value
+    return Vector2D(x=float(value) * math.cos(yaw), y=float(value) * math.sin(yaw))
+
+
+# Main role: convert vector velocity back into one scalar speed value.
+def _speed_from_velocity(velocity) -> float:
+    """
+    Return scalar speed from either Vector2D velocity or scalar velocity.
+
+    Equation:
+        speed = sqrt(vx^2 + vy^2)
+    """
+    if isinstance(velocity, Vector2D):
+        return math.hypot(velocity.x, velocity.y)
+    return abs(float(velocity))
+
+
+# Main role: predict one future position/velocity using constant acceleration and stop clamping.
+def _predict_constant_acceleration_step(
+    position: Vector2D,
+    velocity: Vector2D,
+    acceleration: Vector2D,
+    time_s: float,
+) -> tuple[Vector2D, Vector2D]:
+    """
+    Predict one step and clamp braking objects at the stop point.
+
+    Constant acceleration equations:
+        x(t)  = x0 + vx0 * t + 0.5 * ax * t^2
+        y(t)  = y0 + vy0 * t + 0.5 * ay * t^2
+        vx(t) = vx0 + ax * t
+        vy(t) = vy0 + ay * t
+
+    Stop-time equation for braking:
+        t_stop = -dot(v, a) / dot(a, a)
+    """
+    velocity_dot_accel = velocity.x * acceleration.x + velocity.y * acceleration.y
+    acceleration_norm_sq = acceleration.x**2 + acceleration.y**2
+
+    if velocity_dot_accel < 0.0 and acceleration_norm_sq > 1e-9:
+        stop_time_s = -velocity_dot_accel / acceleration_norm_sq
+        if 0.0 <= stop_time_s <= time_s:
+            stop_pos = Vector2D(
+                x=position.x + velocity.x * stop_time_s + 0.5 * acceleration.x * stop_time_s**2,
+                y=position.y + velocity.y * stop_time_s + 0.5 * acceleration.y * stop_time_s**2,
+            )
+            return stop_pos, Vector2D(x=0.0, y=0.0)
+
+    new_pos = Vector2D(
+        x=position.x + velocity.x * time_s + 0.5 * acceleration.x * time_s**2,
+        y=position.y + velocity.y * time_s + 0.5 * acceleration.y * time_s**2,
+    )
+    new_velocity = Vector2D(
+        x=velocity.x + acceleration.x * time_s,
+        y=velocity.y + acceleration.y * time_s,
+    )
+    return new_pos, new_velocity
+
+
+# Main role: compare two headings correctly even when angles wrap around +pi/-pi.
+def _angle_difference(a: float, b: float) -> float:
+    """
+    Return signed angle difference a - b wrapped to [-pi, pi].
+
+    Equation:
+        delta = (a - b + pi) mod (2*pi) - pi
+    """
+    return (a - b + math.pi) % (2 * math.pi) - math.pi
+
+
+# Main role: express an object's position in the ego vehicle's local coordinate frame.
+def _object_relative_to_ego(obj: DynamicObjectStamped, ego_state: EgoStateStamped) -> Vector2D:
+    """
+    Transform object position from global frame into ego-local frame.
+
+    Equations:
+        dx = obj_x - ego_x
+        dy = obj_y - ego_y
+        x_ego =  dx*cos(yaw) + dy*sin(yaw)
+        y_ego = -dx*sin(yaw) + dy*cos(yaw)
+    """
+    dx = obj.state.pos.x - ego_state.state.pos.x
+    dy = obj.state.pos.y - ego_state.state.pos.y
+    yaw = ego_state.state.yaw
+    return Vector2D(
+        x=dx * math.cos(yaw) + dy * math.sin(yaw),
+        y=-dx * math.sin(yaw) + dy * math.cos(yaw),
+    )
+
+
+# Main role: generate future states for every object over the prediction horizon.
+def predict_motion_constant_acceleration(
+    objects: List[DynamicObjectStamped],  # current dynamic objects from Environment.objects
+    prediction_horizon: int,              # total prediction time [ms]
+    dt: int,                              # prediction step size [ms]
+    last_only: bool = False,              # return only final state per object if True
+) -> List[DynamicObjectStamped]:
+    """Predict object motion over the horizon using constant acceleration."""
+    _validate_prediction_inputs(prediction_horizon, dt)
+    predicted_objects: List[DynamicObjectStamped] = []
+
+    for obj in objects:
+        cs = obj.state
+        velocity = _vector_from_motion(cs.velocity, cs.yaw)          # initial velocity [m/s]
+        acceleration = _vector_from_motion(cs.acceleration, cs.yaw)  # constant acceleration [m/s^2]
+        predicted_states = []
+
+        for t in range(0, prediction_horizon + dt, dt):
+            time_s = t / 1000.0
+            new_pos, new_velocity = _predict_constant_acceleration_step(
+                position=cs.pos,
+                velocity=velocity,
+                acceleration=acceleration,
+                time_s=time_s,
+            )
+
+            predicted_states.append(
+                DynamicObjectStamped(
+                    timestamp=obj.timestamp + t,
+                    state=DynamicObject(
+                        id=cs.id, obj_class=cs.obj_class,
+                        pos=new_pos, yaw=cs.yaw,
+                        velocity=new_velocity, acceleration=acceleration,
+                        width=cs.width, length=cs.length,
+                    ),
+                )
+            )
+
+        if last_only:
+            predicted_objects.append(predicted_states[-1])
+        else:
+            predicted_objects.extend(predicted_states)
+
+    return predicted_objects
+
+# Main role: reorganize flat predictions into object_id -> list of predicted states.
+def group_predictions_by_object(
+    predicted_objects: List[DynamicObjectStamped],  # flat list of predictions for all objects
+) -> Dict[int, List[DynamicObjectStamped]]:
+    """Convert flat predictions into object_id -> predicted states."""
+    grouped: Dict[int, List[DynamicObjectStamped]] = {}
+    for obj in predicted_objects:
+        grouped.setdefault(obj.state.id, []).append(obj)
+    return grouped
+
+# Main role: build a PredictedEnvironment from the current Environment.
+def predict_environment(
+    environment: Environment,                 # current scene with dynamic objects and lanes
+    prediction_horizon: int,                  # total prediction time [ms]
+    dt: int,                                  # prediction step size [ms]
+    model: str = "constant_acceleration",     # kept for future model selection
+) -> PredictedEnvironment:
+    """Predict every object in the environment and return PredictedEnvironment."""
+    if not environment.objects:
+        raise ValueError("Empty object list — prediction would be vacuously safe.")
+    raw = predict_motion_constant_acceleration(environment.objects, prediction_horizon, dt)
+    return PredictedEnvironment(
+        objects=group_predictions_by_object(raw),
+        lanes=environment.lanes,
+        dt=dt,
+        horizon=prediction_horizon,
+    )
+
+# Main role: retrieve all predicted objects at one exact timestamp.
+def objects_at_time(
+    predicted_environment: PredictedEnvironment,
+    timestamp: int,  # timestamp to query [ms]
+) -> List[DynamicObjectStamped]:
+    """Return predicted objects that exist exactly at timestamp."""
+    result = []
+    for preds in predicted_environment.objects.values():
+        result.extend(obj for obj in preds if obj.timestamp == timestamp)
+    return result
+
+# Main role: compute straight-line distance between two 2D points.
+def point_distance(x1: float, y1: float, x2: float, y2: float) -> float:
+    """Euclidean distance between two points."""
+    return math.hypot(x2 - x1, y2 - y1)
+
+# Main role: return the scalar speed of one predicted object.
+def object_speed(obj: DynamicObjectStamped) -> float:
+    """Return predicted object speed [m/s]."""
+    return _speed_from_velocity(obj.state.velocity)
+
+# Main role: find the closest vehicle ahead of ego in the same lane.
+def find_lead_vehicle(
+    environment: Environment,             # current scene
+    ego_state: EgoStateStamped,           # ego pose used as reference
+    lane_y_tolerance: float = 2.0,        # max lateral offset to count as same lane [m]
+) -> Optional[DynamicObjectStamped]:
+    """Find closest object ahead of ego in the same lane."""
+    candidates = []
+    for obj in environment.objects:
+        rel = _object_relative_to_ego(obj, ego_state)
+        if rel.x > 0.0 and abs(rel.y) <= lane_y_tolerance:
+            candidates.append((rel.x, obj))
+    return min(candidates, key=lambda item: item[0])[1] if candidates else None
+
+# Main role: find the closest vehicle ahead of ego that is driving in the opposite direction.
+def find_oncoming_vehicle(
+    environment: Environment,                  # current scene
+    ego_state: EgoStateStamped,                # ego pose used as reference
+    opposite_lane_y_tolerance: float = 4.0,    # lateral search band for opposite lane [m]
+) -> Optional[DynamicObjectStamped]:
+    """Find closest object ahead of ego that is moving in the opposite direction."""
+    candidates = []
+    for obj in environment.objects:
+        rel = _object_relative_to_ego(obj, ego_state)
+        heading_delta = abs(_angle_difference(obj.state.yaw, ego_state.state.yaw))
+        if rel.x > 0.0 and abs(rel.y) <= opposite_lane_y_tolerance and heading_delta > math.pi / 2:
+            candidates.append((rel.x, obj))
+    return min(candidates, key=lambda item: item[0])[1] if candidates else None
+
+# Main role: predict only the lead and oncoming vehicles needed for an overtake decision.
+def predict_overtake_environment(
+    environment: Environment,        # current scene
+    ego_state: EgoStateStamped,      # ego pose used to select relevant vehicles
+    prediction_horizon: int,         # total prediction time [ms]
+    dt: int,                         # prediction step size [ms]
+) -> PredictedEnvironment:
+    """Predict only the lead and oncoming vehicles relevant to overtaking."""
+    lead = find_lead_vehicle(environment, ego_state)
+    oncoming = find_oncoming_vehicle(environment, ego_state)
+    relevant = [obj for obj in (lead, oncoming) if obj is not None]
+    if not relevant:
+        raise ValueError("No lead or oncoming vehicle found.")
+    return predict_environment(
+        Environment(objects=relevant, lanes=environment.lanes),
+        prediction_horizon=prediction_horizon,
+        dt=dt,
+    )
+
+# Main role: decide if non-lead traffic has passed behind ego by the required safety distance.
+def is_overtake_gap_safe(
+    predicted_environment: PredictedEnvironment,  # predicted lead/oncoming vehicles
+    ego_trajectory: List[EgoStateStamped],        # planned ego states over time
+    lead_vehicle_id: int,                         # ignored in oncoming gap check
+    overtake_start_ms: int,                       # start of planned overtake [ms]
+    overtake_duration_ms: int,                    # duration of planned overtake [ms]
+    safety_distance: float,                       # required distance after oncoming passes [m]
+) -> bool:
+    """
+    Return True only if non-lead vehicles have already passed ego.
+
+    For an overtake to be considered safe, the oncoming vehicle must be behind
+    the ego vehicle by at least safety_distance at every checked timestamp in
+    the overtake window. This prevents starting the overtake before the
+    oncoming vehicle has passed.
+    """
+    end_ms = overtake_start_ms + overtake_duration_ms
+    ego_by_ts: Dict[int, EgoStateStamped] = {es.timestamp: es for es in ego_trajectory}
+
+    for ts in range(overtake_start_ms, end_ms + predicted_environment.dt, predicted_environment.dt):
+        ego_state = ego_by_ts.get(ts)
+        if ego_state is None:
+            raise ValueError(f"ego_trajectory missing timestamp {ts} ms.")
+        for obj in objects_at_time(predicted_environment, ts):
+            if obj.state.id == lead_vehicle_id:
+                continue
+            rel = _object_relative_to_ego(obj, ego_state)
+            # Oncoming vehicle must be behind ego by at least safety_distance.
+            if rel.x > -safety_distance:
+                return False
+
+    return True
+
+# ---------------------------------------------------------------------------
+ # helpers
+# ---------------------------------------------------------------------------
+
+HEADER = "=" * 70
+SUBHEADER = "-" * 70
+
+# Main role: format a Vector2D for readable demo output.
+def fmt_vec(v: Vector2D) -> str:
+    return f"({v.x:+.2f}, {v.y:+.2f})"
+
+
+# Main role: print predicted object states in a table for the demo.
+def print_trajectory(label: str, predictions: List[DynamicObjectStamped]) -> None:
+    print(f"\n  {label}")
+    print(f"  {'Time(ms)':>10}  {'x (m)':>10}  {'y (m)':>10}  {'speed (m/s)':>12}  {'stopped':>8}")
+    print(f"  {'-'*10}  {'-'*10}  {'-'*10}  {'-'*12}  {'-'*8}")
+    for obj in predictions:
+        speed = object_speed(obj)
+        stopped = "YES" if speed < 0.01 else ""
+        print(
+            f"  {obj.timestamp:>10}  "
+            f"{obj.state.pos.x:>10.2f}  "
+            f"{obj.state.pos.y:>10.2f}  "
+            f"{speed:>12.3f}  "
+            f"{stopped:>8}"
+        )
+
+
+# Main role: create a simple straight-line ego trajectory for the demo safety check.
+def build_ego_trajectory(
+    start_x: float,
+    start_y: float,
+    speed_mps: float,
+    start_ms: int,
+    end_ms: int,
+    dt: int,
+) -> List[EgoStateStamped]:
+    """
+    Simple straight-line ego trajectory at constant speed.
+    In a real planner this comes from the trajectory generator.
+    """
+    trajectory = []
+    for t in range(start_ms, end_ms + dt, dt):
+        elapsed_s = (t - start_ms) / 1000.0
+        trajectory.append(
+            EgoStateStamped(
+                timestamp=t,
+                state=EgoState(
+                    pos=Vector2D(x=start_x + speed_mps * elapsed_s, y=start_y),
+                    yaw=0.0,
+                    velocity=speed_mps,
+                    acceleration=0.0,
+                ),
+            )
+        )
+    return trajectory
+
+
+# ---------------------------------------------------------------------------
+# Demo scenarios
+# ---------------------------------------------------------------------------
+
+# Main role: run a complete example showing prediction, detection, and overtake safety checks.
+def run_demo() -> None:
+    print(HEADER)
+    print(" PREDICTION OVERTAKE SCENARIO ")
+    print(HEADER)
+
+    DT_MS = 500           # prediction step: 500 ms
+    HORIZON_MS = 4000     # predict 4 seconds ahead
+    T0 = 0                # all objects start at t = 0 ms
+
+    EGO_X = 0.0
+    EGO_Y = 0.0
+    EGO_SPEED = 10.0      # m/s (~36 km/h)
+    EGO_YAW = 0.0         # heading east
+
+    LEAD_X = 40.0         # 40 m ahead of ego
+    LEAD_Y = 0.0          # same lane
+    LEAD_SPEED = 8.0      # m/s, slower than ego
+    LEAD_ACCEL = -4.0     # m/s² — hard braking, will stop
+
+    # Oncoming: heading west → yaw = pi
+    ONCOMING_Y = 3.5      # opposite lane (3.5 m lateral offset)
+    ONCOMING_SPEED = 12.0 # m/s (~43 km/h) heading toward ego
+    ONCOMING_YAW = math.pi
+
+    ego_state_t0 = EgoStateStamped(
+        timestamp=T0,
+        state=EgoState(
+            pos=Vector2D(x=EGO_X, y=EGO_Y),
+            yaw=EGO_YAW,
+            velocity=EGO_SPEED,
+            acceleration=0.0,
+        ),
+    )
+
+    lead_vehicle = DynamicObjectStamped(
+        timestamp=T0,
+        state=DynamicObject(
+            id=1,
+            obj_class="car",
+            pos=Vector2D(x=LEAD_X, y=LEAD_Y),
+            yaw=EGO_YAW,
+            velocity=Vector2D(x=LEAD_SPEED, y=0.0),
+            acceleration=Vector2D(x=LEAD_ACCEL, y=0.0),
+            width=2.0,
+            length=4.5,
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # Section 1: Lead vehicle trajectory (braking to a stop)
+    # ------------------------------------------------------------------
+    print("\n[1] LEAD VEHICLE PREDICTION (braking hard at -4 m/s²)")
+    print(SUBHEADER)
+    print(f"  Initial pos : x={LEAD_X:.1f} m, y={LEAD_Y:.1f} m")
+    print(f"  Initial speed: {LEAD_SPEED:.1f} m/s")
+    print(f"  Acceleration: {LEAD_ACCEL:.1f} m/s²")
+
+    lead_preds = predict_motion_constant_acceleration(
+        objects=[lead_vehicle],
+        prediction_horizon=HORIZON_MS,
+        dt=DT_MS,
+    )
+    print_trajectory("Lead vehicle states:", lead_preds)
+
+    # Verify velocity clamping — speed should not go below zero
+    min_speed = min(object_speed(obj) for obj in lead_preds)
+    print(f"\n  ✓ Minimum predicted speed = {min_speed:.4f} m/s  (should be 0, never negative)")
+
+    # ------------------------------------------------------------------
+    # Section 2: Oncoming vehicle trajectory (constant approach)
+    # ------------------------------------------------------------------
+    print(f"\n[2] ONCOMING VEHICLE PREDICTION (constant velocity, heading west)")
+    print(SUBHEADER)
+
+    def make_oncoming(x_start: float, label: str) -> DynamicObjectStamped:
+        return DynamicObjectStamped(
+            timestamp=T0,
+            state=DynamicObject(
+                id=2,
+                obj_class="car",
+                pos=Vector2D(x=x_start, y=ONCOMING_Y),
+                yaw=ONCOMING_YAW,
+                velocity=Vector2D(x=-ONCOMING_SPEED, y=0.0),  # negative x = westbound
+                acceleration=Vector2D(x=0.0, y=0.0),
+                width=2.0,
+                length=4.5,
+            ),
+        )
+
+    oncoming_far = make_oncoming(x_start=120.0, label="FAR")
+    oncoming_near = make_oncoming(x_start=60.0, label="NEAR")
+
+    for label, oncoming_obj in [("FAR (120 m away)", oncoming_far), ("NEAR (60 m away)", oncoming_near)]:
+        preds = predict_motion_constant_acceleration(
+            objects=[oncoming_obj],
+            prediction_horizon=HORIZON_MS,
+            dt=DT_MS,
+        )
+        print_trajectory(f"Oncoming vehicle — {label}:", preds)
+
+    # ------------------------------------------------------------------
+    # Section 3: Scene detection (find_lead_vehicle / find_oncoming_vehicle)
+    # ------------------------------------------------------------------
+    print(f"\n[3] SCENE DETECTION")
+    print(SUBHEADER)
+
+    env_far = Environment(objects=[lead_vehicle, oncoming_far], lanes=[])
+    env_near = Environment(objects=[lead_vehicle, oncoming_near], lanes=[])
+
+    detected_lead = find_lead_vehicle(env_far, ego_state_t0)
+    detected_oncoming = find_oncoming_vehicle(env_far, ego_state_t0)
+
+    print(f"  Ego at x={EGO_X:.1f} m, heading east (yaw=0)")
+    print(
+        f"  Lead vehicle detected    : "
+        f"{'YES — id=' + str(detected_lead.state.id) + ' at x=' + str(detected_lead.state.pos.x) if detected_lead else 'NO'}"
+    )
+    print(
+        f"  Oncoming vehicle detected: "
+        f"{'YES — id=' + str(detected_oncoming.state.id) + ' at x=' + str(detected_oncoming.state.pos.x) if detected_oncoming else 'NO'}"
+    )
+
+    # ------------------------------------------------------------------
+    # Section 4: Full predict_overtake_environment output
+    # ------------------------------------------------------------------
+    print(f"\n[4] PREDICTED OVERTAKE ENVIRONMENT (far oncoming)")
+    print(SUBHEADER)
+
+    pred_env_far = predict_overtake_environment(
+        environment=env_far,
+        ego_state=ego_state_t0,
+        prediction_horizon=HORIZON_MS,
+        dt=DT_MS,
+    )
+
+    for obj_id, preds in pred_env_far.objects.items():
+        role = "lead" if obj_id == 1 else "oncoming"
+        print_trajectory(f"Object id={obj_id} ({role}):", preds)
+
+    # ------------------------------------------------------------------
+    # Section 5: objects_at_time spot check
+    # ------------------------------------------------------------------
+    print(f"\n[5] OBJECTS AT t=2000 ms (mid-overtake snapshot)")
+    print(SUBHEADER)
+
+    snapshot = objects_at_time(pred_env_far, timestamp=2000)
+    for obj in snapshot:
+        role = "lead" if obj.state.id == 1 else "oncoming"
+        print(
+            f"  id={obj.state.id} ({role:8s})  "
+            f"x={obj.state.pos.x:7.2f} m  "
+            f"y={obj.state.pos.y:6.2f} m  "
+            f"speed={object_speed(obj):.2f} m/s"
+        )
+
+    # ------------------------------------------------------------------
+    # Section 6: Safety check — Scenario A (FAR oncoming → SAFE)
+    # ------------------------------------------------------------------
+    print(f"\n[6] OVERTAKE SAFETY CHECK")
+    print(SUBHEADER)
+
+    # Simple straight-line ego trajectory at constant speed during overtake
+    OVERTAKE_START_MS = 0
+    OVERTAKE_DURATION_MS = 4000
+    SAFETY_DISTANCE_M = 30.0
+
+    ego_traj = build_ego_trajectory(
+        start_x=EGO_X,
+        start_y=EGO_Y,
+        speed_mps=EGO_SPEED,
+        start_ms=OVERTAKE_START_MS,
+        end_ms=OVERTAKE_START_MS + OVERTAKE_DURATION_MS,
+        dt=DT_MS,
+    )
+
+    print(f"  Safety distance threshold : {SAFETY_DISTANCE_M:.1f} m")
+    print(f"  Overtake window           : {OVERTAKE_START_MS}–{OVERTAKE_START_MS + OVERTAKE_DURATION_MS} ms")
+    print(f"  Ego speed during overtake : {EGO_SPEED:.1f} m/s (constant, straight-line)")
+
+    # Scenario A — far oncoming
+    pred_env_far_check = predict_overtake_environment(
+        environment=env_far,
+        ego_state=ego_state_t0,
+        prediction_horizon=HORIZON_MS,
+        dt=DT_MS,
+    )
+    safe_a = is_overtake_gap_safe(
+        predicted_environment=pred_env_far_check,
+        ego_trajectory=ego_traj,
+        lead_vehicle_id=1,
+        overtake_start_ms=OVERTAKE_START_MS,
+        overtake_duration_ms=OVERTAKE_DURATION_MS,
+        safety_distance=SAFETY_DISTANCE_M,
+    )
+    print(f"\n  Scenario A — Oncoming starts at 120 m: {'✓ SAFE to overtake' if safe_a else '✗ NOT safe to overtake'}")
+
+    # Scenario B — near oncoming
+    pred_env_near_check = predict_overtake_environment(
+        environment=env_near,
+        ego_state=ego_state_t0,
+        prediction_horizon=HORIZON_MS,
+        dt=DT_MS,
+    )
+    safe_b = is_overtake_gap_safe(
+        predicted_environment=pred_env_near_check,
+        ego_trajectory=ego_traj,
+        lead_vehicle_id=1,
+        overtake_start_ms=OVERTAKE_START_MS,
+        overtake_duration_ms=OVERTAKE_DURATION_MS,
+        safety_distance=SAFETY_DISTANCE_M,
+    )
+    print(f"  Scenario B — Oncoming starts at  60 m: {'✓ SAFE to overtake' if safe_b else '✗ NOT safe to overtake'}")
+
+    # Show at which timestamp Scenario B fails
+    if not safe_b:
+        print(f"\n  Breakdown of closing distance (Scenario B):")
+        print(f"  {'Time(ms)':>10}  {'ego_x':>8}  {'oncoming_x':>12}  {'distance':>10}  {'< {:.0f}m?'.format(SAFETY_DISTANCE_M):>10}")
+        print(f"  {'-'*10}  {'-'*8}  {'-'*12}  {'-'*10}  {'-'*10}")
+        ego_by_ts = {es.timestamp: es for es in ego_traj}
+        for ts in range(OVERTAKE_START_MS, OVERTAKE_START_MS + OVERTAKE_DURATION_MS + DT_MS, DT_MS):
+            es = ego_by_ts.get(ts)
+            if es is None:
+                continue
+            for obj in objects_at_time(pred_env_near_check, ts):
+                if obj.state.id == 1:
+                    continue
+                dist = point_distance(
+                    es.state.pos.x, es.state.pos.y,
+                    obj.state.pos.x, obj.state.pos.y,
+                )
+                flag = "✗ UNSAFE" if dist < SAFETY_DISTANCE_M else ""
+                print(
+                    f"  {ts:>10}  {es.state.pos.x:>8.1f}  "
+                    f"{obj.state.pos.x:>12.1f}  {dist:>10.1f}  {flag:>10}"
+                )
+
+    # ------------------------------------------------------------------
+    # Printed comments
+    # ------------------------------------------------------------------
+    print(f"\n{HEADER}")
+    print("  SUMMARY")
+    print(HEADER)
+    print(f"  Lead vehicle (id=1):  braking at {LEAD_ACCEL} m/s², velocity clamped to 0 ✓")
+    print(f"  Oncoming far  (120 m): overtake {'SAFE ✓' if safe_a else 'NOT SAFE ✗'}")
+    print(f"  Oncoming near  (60 m): overtake {'SAFE ✓' if safe_b else 'NOT SAFE ✗'}")
+    print(f"\n  If both lines above match expectations, predictivity.py is working correctly.")
+    print(HEADER)
+
+
+if __name__ == "__main__":
+    run_demo()
