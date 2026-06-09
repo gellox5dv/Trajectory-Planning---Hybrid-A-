@@ -24,7 +24,7 @@ class SharedState:
     """
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.trajectory = Trajectory(None)
+        self.trajectory = Trajectory([])
         self.is_running = True
 
 
@@ -106,7 +106,7 @@ def main(cfg: DictConfig) -> None:
     dt_controller_sec = cfg.controller.dt / 1000.0
     ctrl_thread = threading.Thread(
         target=controller_worker, 
-        args=(sim, controller, shared_state, dt_controller_sec),
+        args=(sim, controller, shared_state, dt_controller_sec, cfg),
         daemon=True  # Automatically stops when the main program exits
     )
     ctrl_thread.start()

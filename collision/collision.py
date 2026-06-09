@@ -6,7 +6,7 @@ from models.models import (
     EgoState, EgoStateStamped, DynamicObject, DynamicObjectStamped,
     Lane, Environment, PredictedEnvironment, Vector2D
 )
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Polygon
 from omegaconf import DictConfig
 
 MovingObject = Union[EgoStateStamped, DynamicObjectStamped]
@@ -213,23 +213,15 @@ def _get_lane_occlusion(
     ego_corners = get_bbox_corners(ego_x, ego_y, ego_yaw, vehicle_params.length, vehicle_params.width)
     ego_polygon = Polygon([(corner.x, corner.y) for corner in ego_corners])
 
-    lane_polygon_points = []
-    for i in range(len(lane.centerline) - 1):
-        p1, _ = lane.centerline[i]
-        p2, _ = lane.centerline[i + 1]
+    lane_centerline = [(point.x, point.y) for point, _ in lane.centerline]
+    if len(lane_centerline) < 2:
+        return 0.0
 
-        lane_vec = Vector2D(x = p2.x - p1.x, y = p2.y - p1.y)
-        lane_len = (lane_vec.x ** 2 + lane_vec.y ** 2) ** 0.5
-        if lane_len == 0.0:
-            continue
-        
-        lane_unit = Vector2D(x = lane_vec.x / lane_len, y = lane_vec.y / lane_len)
-        normal_vec = Vector2D(x = -lane_unit.y * lane.width / 2, y = lane_unit.x * lane.width / 2)
+    lane_line = LineString(lane_centerline)
+    if lane_line.length == 0.0:
+        return 0.0
 
-        lane_polygon_points.append((p1.x + normal_vec.x, p1.y + normal_vec.y))
-        lane_polygon_points.append((p1.x - normal_vec.x, p1.y - normal_vec.y))
-    
-    lane_polygon = Polygon(lane_polygon_points)
+    lane_polygon = lane_line.buffer(lane.width / 2, cap_style='flat', join_style='mitre')
 
     intersection_area = ego_polygon.intersection(lane_polygon).area
     return intersection_area
