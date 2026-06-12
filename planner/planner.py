@@ -133,7 +133,7 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
                 state=curr_state,
                 request=request,
                 veh_cfg=cfg.vehicle,
-                max_a_lat=cfg.motion_primitives.max_a_lat
+                mp_cfg=cfg.motion_primitives
             )
             
             # Aggregate total weighted cost f(n) for the priority queue
