@@ -259,7 +259,7 @@ def get_ego_lane_info(
     ego_state: EgoState,
     vehicle_cfg: DictConfig,
     lanes: List[Lane]
-) -> Tuple[int, float, float, float, bool]:
+) -> Tuple[int, float, float, float, bool, float]:
     """
     Returns:
     lane_id: int,
@@ -267,6 +267,7 @@ def get_ego_lane_info(
     yaw_offset_to_lane_direction: float, [rad]
     lane_occlusion: float [e.g. 0.8]
     opposite_lane: bool
+    speed_limit: float [m/s]
     """
     
     occlusion_sum = 0.0
@@ -276,6 +277,6 @@ def get_ego_lane_info(
         if lane_occlusion > 0.5:
             distance_to_lane_center, yaw_offset = _get_lane_offset(EgoStateStamped(timestamp=0, state=ego_state), lane)
             opposite_lane = (yaw_offset > pi / 2 or yaw_offset < -pi / 2)
-            return lane.id, distance_to_lane_center, yaw_offset, occlusion_sum, opposite_lane
+            return lane.id, distance_to_lane_center, yaw_offset, occlusion_sum, opposite_lane, lane.speed_limit
     
-    return -1, float('inf'), 0.0, occlusion_sum, False
+    return -1, float('inf'), 0.0, occlusion_sum, False, 0.0
