@@ -1,13 +1,9 @@
 # Hydra Outputs
 outputs/
 multirun/
-<<<<<<< HEAD
-*.pyc
-=======
 *.pyc
 remove_cache.py
 test.*
 test2.*
 .vscode/
 .gitignore
->>>>>>> feature/bicycle-only

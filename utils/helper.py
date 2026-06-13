@@ -1,11 +1,7 @@
 from math import cos, pi, sin, hypot
 from typing import List, Optional, Tuple
 from configparser import ConfigParser
-<<<<<<< HEAD
-from models.models import Vector2D, VehicleParameters, EgoStateStamped
-=======
 from models.models import Vector2D, EgoStateStamped, Lane, GoalRegion
->>>>>>> feature/bicycle-only
 import copy
 
 
@@ -66,47 +62,14 @@ def check_line_intersection(p1: Vector2D, p2: Vector2D, p3: Vector2D, p4: Vector
     return (0 <= t <= 1) and (0 <= u <= 1)
 
 
-<<<<<<< HEAD
-def load_vehicle_parameters() -> VehicleParameters:
-    """Load vehicle parameters from the configuration file."""
-
-    config = ConfigParser()
-    config.read('config.ini')
-
-    return VehicleParameters(
-        max_steer = config.getfloat('vehicle', 'max_steer'),
-        max_steer_rate = config.getfloat('vehicle', 'max_steer_rate'),
-        lf = config.getfloat('vehicle', 'lf'),
-        lr = config.getfloat('vehicle', 'lr'),
-        Iz = config.getfloat('vehicle', 'Iz'),
-        wheel_length = config.getfloat('vehicle', 'wheel_length'),
-        wheel_width = config.getfloat('vehicle', 'wheel_width'),
-        wheel_base = config.getfloat('vehicle', 'wheel_base'),
-        track = config.getfloat('vehicle', 'track'),
-        width = config.getfloat('vehicle', 'width'),
-        length = config.getfloat('vehicle', 'length'),
-        rear_to_wheel = config.getfloat('vehicle', 'rear_to_wheel'),
-        m = config.getfloat('vehicle', 'm'),
-        Cf = eval(config.get('vehicle', 'Cf')),
-        Cr = eval(config.get('vehicle', 'Cr')),
-        max_acceleration = config.getfloat('vehicle', 'max_acceleration'),
-        max_deceleration = config.getfloat('vehicle', 'max_deceleration'),
-        mu = config.getfloat('vehicle', 'mu')
-    )
-
-=======
->>>>>>> feature/bicycle-only
 def get_magnitude(vector: Vector2D) -> float:
     return hypot(vector.x, vector.y)
 
 
-<<<<<<< HEAD
-=======
 def get_vector(magnitude: float, direction: float) -> Vector2D:
     return Vector2D(x = magnitude * cos(direction), y = magnitude * sin(direction))
 
 
->>>>>>> feature/bicycle-only
 def shift_rear_axle_to_cg(state_stamped: EgoStateStamped, lr: float) -> EgoStateStamped:
     """
     Shifts the vehicle's position from the center of the rear axle to the center of gravity (CG).
@@ -151,8 +114,6 @@ def shift_cg_to_rear_axle(state_stamped: EgoStateStamped, lr: float) -> EgoState
     new_stamped.state.pos.y -= lr * sin(yaw)
     
     return new_stamped
-<<<<<<< HEAD
-=======
 
 
 def get_nearest_lane_center(ego_state: EgoStateStamped, lanes: List[Lane]) -> Tuple[float, Vector2D]:
@@ -220,4 +181,3 @@ def get_goal_region(
         width=width,
         yaw=nearest_lane_yaw
     )
->>>>>>> feature/bicycle-only

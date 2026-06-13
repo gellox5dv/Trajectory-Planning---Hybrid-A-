@@ -1,14 +1,5 @@
 import heapq
 from math import pi, cos, sin
-<<<<<<< HEAD
-from utils.helper import get_bbox_corners
-from typing import Tuple, List, Optional, overload, Union, Sequence
-from models.models import (
-    EgoState, EgoStateStamped, DynamicObject, DynamicObjectStamped,
-    VehicleParameters, Lane, Environment, PredictedEnvironment, Vector2D
-)
-from shapely.geometry import Polygon
-=======
 from utils.helper import get_bbox_corners, get_magnitude, get_vector
 from typing import Tuple, List, Optional, overload, Union, Sequence
 from models.models import (
@@ -17,7 +8,6 @@ from models.models import (
 )
 from shapely.geometry import LineString, Polygon
 from omegaconf import DictConfig
->>>>>>> feature/bicycle-only
 
 MovingObject = Union[EgoStateStamped, DynamicObjectStamped]
 
@@ -28,11 +18,7 @@ def get_x_y_yaw_from_state(state: MovingObject) -> Tuple[float, float, float]:
 def _ego_object_distance(
     ego_state: EgoStateStamped,
     obj: DynamicObjectStamped,
-<<<<<<< HEAD
-    ego_params: VehicleParameters
-=======
     ego_params: DictConfig
->>>>>>> feature/bicycle-only
 ) -> float:
     """Calculate the distance from the ego vehicle to a dynamic object."""
     ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(ego_state)
@@ -79,24 +65,17 @@ def _create_interpolated_object(
     new_velocity: float
 ) -> MovingObject:
 
-<<<<<<< HEAD
-=======
     vel_vector = get_vector(new_velocity, new_yaw)
 
->>>>>>> feature/bicycle-only
     if isinstance(base, EgoStateStamped):
         return EgoStateStamped(
             timestamp=new_timestamp,
             state=EgoState(
                 pos=new_pos,
                 yaw=new_yaw,
-<<<<<<< HEAD
-                velocity=new_velocity
-=======
                 velocity=vel_vector,
                 acceleration=Vector2D(0.0, 0.0),
                 steering_angle=0.0,
->>>>>>> feature/bicycle-only
             )
         )
 
@@ -108,13 +87,8 @@ def _create_interpolated_object(
                 obj_class=base.state.obj_class,
                 pos=new_pos,
                 yaw=new_yaw,
-<<<<<<< HEAD
-                velocity=new_velocity,
-                acceleration=0.0,
-=======
                 velocity=vel_vector,
                 acceleration=Vector2D(0.0, 0.0),
->>>>>>> feature/bicycle-only
                 width=base.state.width,
                 length=base.state.length
             )
@@ -154,14 +128,9 @@ def _interpolate_states(
     
     dx = (end_state.state.pos.x - start_state.state.pos.x)
     dy = (end_state.state.pos.y - start_state.state.pos.y)
-<<<<<<< HEAD
-    dvel = (end_state.state.velocity - start_state.state.velocity)
-    dyaw = (end_state.state.yaw - start_state.state.yaw + pi) % (2 * pi) - pi
-=======
     dvel = (get_magnitude(end_state.state.velocity) - get_magnitude(start_state.state.velocity))
     dyaw = (end_state.state.yaw - start_state.state.yaw + pi) % (2 * pi) - pi
     start_vel_magnitude = get_magnitude(start_state.state.velocity)
->>>>>>> feature/bicycle-only
 
     interpolated_states = [start_state]
     t = 0
@@ -171,11 +140,7 @@ def _interpolate_states(
         interp_x = start_state.state.pos.x + (t * dx / orig_resolution_ms)
         interp_y = start_state.state.pos.y + (t * dy / orig_resolution_ms)
         interp_yaw = start_state.state.yaw + (t * dyaw / orig_resolution_ms)
-<<<<<<< HEAD
-        interp_vel = start_state.state.velocity + (t * dvel / orig_resolution_ms)
-=======
         interp_vel = start_vel_magnitude + (t * dvel / orig_resolution_ms)
->>>>>>> feature/bicycle-only
 
         interpolated_state = _create_interpolated_object(
             base=start_state,
@@ -194,11 +159,7 @@ def get_distance_to_objects(
     current_ego: EgoStateStamped,
     previous_ego: EgoStateStamped,
     predicted_env: PredictedEnvironment,
-<<<<<<< HEAD
-    vehicle_params: VehicleParameters,
-=======
     vehicle_params: DictConfig,
->>>>>>> feature/bicycle-only
     resolution_ms: int
 ) -> Tuple[Optional[Sequence[Tuple[int, float]]], bool]:
     """Checks the interval between two planning steps for collisions and calculates aggregated distances to all objects."""
@@ -241,11 +202,7 @@ def get_distance_to_objects(
 def _get_lane_occlusion(
     ego_state: EgoStateStamped,
     lane: Lane,
-<<<<<<< HEAD
-    vehicle_params: VehicleParameters
-=======
     vehicle_params: DictConfig
->>>>>>> feature/bicycle-only
 ) -> float:
     """Calculate the area of the ego vehicle on the lane."""
     ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(ego_state)
@@ -256,25 +213,6 @@ def _get_lane_occlusion(
     ego_corners = get_bbox_corners(ego_x, ego_y, ego_yaw, vehicle_params.length, vehicle_params.width)
     ego_polygon = Polygon([(corner.x, corner.y) for corner in ego_corners])
 
-<<<<<<< HEAD
-    lane_polygon_points = []
-    for i in range(len(lane.centerline) - 1):
-        p1, _ = lane.centerline[i]
-        p2, _ = lane.centerline[i + 1]
-
-        lane_vec = Vector2D(x = p2.x - p1.x, y = p2.y - p1.y)
-        lane_len = (lane_vec.x ** 2 + lane_vec.y ** 2) ** 0.5
-        if lane_len == 0.0:
-            continue
-        
-        lane_unit = Vector2D(x = lane_vec.x / lane_len, y = lane_vec.y / lane_len)
-        normal_vec = Vector2D(x = -lane_unit.y * lane.width / 2, y = lane_unit.x * lane.width / 2)
-
-        lane_polygon_points.append((p1.x + normal_vec.x, p1.y + normal_vec.y))
-        lane_polygon_points.append((p1.x - normal_vec.x, p1.y - normal_vec.y))
-    
-    lane_polygon = Polygon(lane_polygon_points)
-=======
     lane_centerline = [(point.x, point.y) for point, _ in lane.centerline]
     if len(lane_centerline) < 2:
         return 0.0
@@ -284,7 +222,6 @@ def _get_lane_occlusion(
         return 0.0
 
     lane_polygon = lane_line.buffer(lane.width / 2, cap_style='flat', join_style='mitre')
->>>>>>> feature/bicycle-only
 
     intersection_area = ego_polygon.intersection(lane_polygon).area
     return intersection_area
@@ -320,38 +257,20 @@ def _get_lane_offset(
 
 def get_ego_lane_info(
     ego_state: EgoState,
-<<<<<<< HEAD
-    vehicle_params: VehicleParameters,
-    lanes: List[Lane]
-) -> Tuple[int, float, float, float]:
-=======
     vehicle_cfg: DictConfig,
     lanes: List[Lane]
 ) -> Tuple[int, float, float, float, bool]:
->>>>>>> feature/bicycle-only
     """
     Returns:
     lane_id: int,
     distance_to_lane_center: float [m]
     yaw_offset_to_lane_direction: float, [rad]
     lane_occlusion: float [e.g. 0.8]
-<<<<<<< HEAD
-=======
     opposite_lane: bool
->>>>>>> feature/bicycle-only
     """
     
     occlusion_sum = 0.0
     for lane in lanes:
-<<<<<<< HEAD
-        lane_occlusion = _get_lane_occlusion(EgoStateStamped(timestamp=0, state=ego_state), lane, vehicle_params)
-        occlusion_sum += lane_occlusion
-        if lane_occlusion > 0.5:
-            distance_to_lane_center, yaw_offset = _get_lane_offset(EgoStateStamped(timestamp=0, state=ego_state), lane)
-            return lane.id, distance_to_lane_center, yaw_offset, occlusion_sum
-    
-    return -1, float('inf'), 0.0, occlusion_sum
-=======
         lane_occlusion = _get_lane_occlusion(EgoStateStamped(timestamp=0, state=ego_state), lane, vehicle_cfg)
         occlusion_sum += lane_occlusion
         if lane_occlusion > 0.5:
@@ -360,4 +279,3 @@ def get_ego_lane_info(
             return lane.id, distance_to_lane_center, yaw_offset, occlusion_sum, opposite_lane
     
     return -1, float('inf'), 0.0, occlusion_sum, False
->>>>>>> feature/bicycle-only

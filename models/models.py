@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-from dataclasses import dataclass, field
-=======
 from dataclasses import dataclass
->>>>>>> feature/bicycle-only
 from typing import List, Tuple, Dict, Optional
 from enum import Enum
 
@@ -18,69 +14,18 @@ class Vector2D:
 
 
 # ============================================================
-<<<<<<< HEAD
-# Vehicle Model
-# ============================================================
-
-@dataclass
-class VehicleParameters:
-    max_steer: float            # maximum steering angle wheels [rad]
-    max_steer_rate: float       # maximum steering rate wheels [rad/s]
-
-    lf: float                   # CoG to front axle [m]
-    lr: float                   # CoG to rear axle [m]
-    Iz: float                   #Moment of inertia [kg.m2]
-
-    wheel_length: float          #Wheel length [m]
-    wheel_width: float           #Wheel width [m]
-    
-    wheel_base: float            #Wheel base [m]
-    track: float                 #Vehile track [m]
-
-    width: float                # vehicle width [m]
-    length: float               # vehicle length [m]
-    rear_to_wheel: float        #Distance rear to axel [m]
-
-    m: float                    # mass [kg]
-
-    Cf: float                   # front cornering stiffness [N/rad]
-    Cr: float                   # rear cornering stiffness [N/rad]
-
-    max_acceleration: float     # max longitudinal acceleration [m/s²]
-    max_deceleration: float     # max braking deceleration [m/s²]
-
-    mu: float                   # tire-road friction coefficient [-]
-
-
-# ============================================================
-=======
->>>>>>> feature/bicycle-only
 # Ego Vehicle State (Planning)
 # ============================================================
 
 @dataclass
 class EgoState:
     pos: Vector2D               # position (x, y) in global coordinate system [m]
-<<<<<<< HEAD
-    yaw: float = 0.0            # heading angle in global coordinate system [rad]
-    velocity: Vector2D | float = field(default_factory=lambda:Vector2D(0.0, 0.0))   # velocity (x,y) in global coordinate system [m/s]
-    acceleration: Vector2D | float = field(default_factory=lambda:Vector2D(0.0, 0.0))    # acceleration (x,y) in global coordinate system [m/s]
-    steering_angle: float = 0.0      # angle of the wheels [rad]
-    
-    def __post__init__(self) -> None:
-        # Ensure velocity and acceleration are Vector2D instances
-        if isinstance(self.velocity, (int, float)):
-            self.velocity = Vector2D(x=float(self.velocity), y=0.0)
-        if isinstance(self.acceleration, (int, float)):
-            self.acceleration = Vector2D(x=float(self.acceleration), y=0.0)
-=======
     velocity: Vector2D          # velocity (x,y) in global coordinate system [m/s]
     acceleration: Vector2D      # acceleration (x,y) in global coordinate system [m/s]
     yaw: float                  # heading angle in global coordinate system [rad]
     steering_angle: float       # angle of the wheels [rad]
     
 
->>>>>>> feature/bicycle-only
 
 @dataclass
 class EgoStateStamped:
@@ -117,13 +62,8 @@ class DynamicObject:
     pos: Vector2D               # position [m]
     yaw: float                  # orientation [rad]
 
-<<<<<<< HEAD
-    velocity: float             # velocity (vx, vy) [m/s]
-    acceleration: float         # acceleration (ax, ay) [m/s²]
-=======
     velocity: Vector2D             # velocity (vx, vy) [m/s]
     acceleration: Vector2D         # acceleration (ax, ay) [m/s²]
->>>>>>> feature/bicycle-only
 
     width: float                # bounding box width [m]
     length: float               # bounding box length [m]
@@ -210,13 +150,7 @@ class GoalRegion:
     width: float                # lateral size [m]
 
     yaw: float                  # desired heading [rad]
-<<<<<<< HEAD
-    yaw_tolerance: float = 0.0      #Allowable error in the heading [rad]
-    target_velocity: float = 0.0    # Target velocity [m/s]
-    velocity_tolerance: float = 0.0 # Allowable error in velocity [m/s]
-=======
 
->>>>>>> feature/bicycle-only
 
 # ============================================================
 # Planner Interface
@@ -230,12 +164,8 @@ class PlanningRequest:
     target_speed: float         # target speed
 
     environment: PredictedEnvironment
-<<<<<<< HEAD
-    
-=======
 
 
->>>>>>> feature/bicycle-only
 # ============================================================
 # Planner Output
 # ============================================================

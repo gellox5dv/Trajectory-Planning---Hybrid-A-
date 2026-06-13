@@ -1,14 +1,8 @@
 from math import sin, cos
-<<<<<<< HEAD
-from models.models import DynamicObject, DynamicObjectStamped, Vector2D
-
-def predict_motion_constant_velocity(objects: list[DynamicObjectStamped], prediction_horizon: int, dt: int) -> list[DynamicObjectStamped]:
-=======
 from typing import List
 from models.models import DynamicObject, DynamicObjectStamped, Vector2D
 
 def predict_motion_constant_velocity(objects: List[DynamicObjectStamped], prediction_horizon: int, dt: int, last_only: bool = False) -> List[DynamicObjectStamped]:
->>>>>>> feature/bicycle-only
     """
     Predict the future states of dynamic objects using a simple constant velocity model.
     
@@ -16,10 +10,7 @@ def predict_motion_constant_velocity(objects: List[DynamicObjectStamped], predic
         objects: A list of DynamicObjectStamped representing the current states of dynamic objects.
         prediction_horizon: The total time (in milliseconds) for which to predict the motion.
         dt: The time step (in milliseconds) between predictions.
-<<<<<<< HEAD
-=======
         last_only: If True, only the last predicted state for each object will be returned.
->>>>>>> feature/bicycle-only
     
     Returns:
         A list of DynamicObjectStamped representing the predicted future states of the dynamic objects at each time step.
@@ -31,13 +22,8 @@ def predict_motion_constant_velocity(objects: List[DynamicObjectStamped], predic
         predicted_states = []
         
         for t in range(0, prediction_horizon + dt, dt):
-<<<<<<< HEAD
-            new_x = current_state.pos.x + current_state.velocity * cos(current_state.yaw) * (t / 1000.0)
-            new_y = current_state.pos.y + current_state.velocity * sin(current_state.yaw) * (t / 1000.0)
-=======
             new_x = current_state.pos.x + current_state.velocity.x * (t / 1000.0)
             new_y = current_state.pos.y + current_state.velocity.y * (t / 1000.0)
->>>>>>> feature/bicycle-only
             new_pos = Vector2D(x=new_x, y=new_y)
             
             predicted_state = DynamicObjectStamped(
@@ -48,34 +34,22 @@ def predict_motion_constant_velocity(objects: List[DynamicObjectStamped], predic
                     pos=new_pos,
                     yaw=current_state.yaw,
                     velocity=current_state.velocity,
-<<<<<<< HEAD
-                    acceleration=0.0,  # Assuming constant velocity, so acceleration is zero
-=======
                     acceleration=Vector2D(x=0.0, y=0.0),  # Assuming constant velocity, so acceleration is zero
->>>>>>> feature/bicycle-only
                     width=current_state.width,
                     length=current_state.length
                 )
             )
             predicted_states.append(predicted_state)
         
-<<<<<<< HEAD
-        predicted_objects.extend(predicted_states)
-=======
         if last_only:
             predicted_objects.append(predicted_states[-1])
         else:
             predicted_objects.extend(predicted_states)
->>>>>>> feature/bicycle-only
     
     return predicted_objects
 
 
-<<<<<<< HEAD
-def predict_motion_constant_acceleration(objects: list[DynamicObjectStamped], prediction_horizon: int, dt: int) -> list[DynamicObjectStamped]:
-=======
 def predict_motion_constant_acceleration(objects: List[DynamicObjectStamped], prediction_horizon: int, dt: int) -> List[DynamicObjectStamped]:
->>>>>>> feature/bicycle-only
     """
     Predict the future states of dynamic objects using a simple constant acceleration model.
     
@@ -94,19 +68,11 @@ def predict_motion_constant_acceleration(objects: List[DynamicObjectStamped], pr
         predicted_states = []
         
         for t in range(0, prediction_horizon + dt, dt):
-<<<<<<< HEAD
-            new_x = current_state.pos.x + current_state.velocity * cos(current_state.yaw) * (t / 1000.0) + 0.5 * current_state.acceleration * cos(current_state.yaw) * ((t / 1000.0) ** 2)
-            new_y = current_state.pos.y + current_state.velocity * sin(current_state.yaw) * (t / 1000.0) + 0.5 * current_state.acceleration * sin(current_state.yaw) * ((t / 1000.0) ** 2)
-            new_pos = Vector2D(x=new_x, y=new_y)
-            
-            new_velocity = current_state.velocity + current_state.acceleration * (t / 1000.0)
-=======
             new_x = current_state.pos.x + current_state.velocity.x * (t / 1000.0) + 0.5 * current_state.acceleration.x * ((t / 1000.0) ** 2)
             new_y = current_state.pos.y + current_state.velocity.y * (t / 1000.0) + 0.5 * current_state.acceleration.y * ((t / 1000.0) ** 2)
             new_pos = Vector2D(x=new_x, y=new_y)
             
             new_velocity = Vector2D(x=current_state.velocity.x + current_state.acceleration.x * (t / 1000.0), y=current_state.velocity.y + current_state.acceleration.y * (t / 1000.0))
->>>>>>> feature/bicycle-only
             
             predicted_state = DynamicObjectStamped(
                 timestamp=obj.timestamp + t,
