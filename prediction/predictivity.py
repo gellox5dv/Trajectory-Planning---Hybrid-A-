@@ -1,7 +1,11 @@
 import math
 import sys
 from pathlib import Path
+<<<<<<< HEAD
 from typing import Dict, List, Optional
+=======
+from typing import Dict, List, Literal, Optional
+>>>>>>> feature/bicycle-only
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -9,13 +13,17 @@ if __package__ is None or __package__ == "":
 from models.models import (
     DynamicObject,
     DynamicObjectStamped,
+<<<<<<< HEAD
     EgoState,
+=======
+>>>>>>> feature/bicycle-only
     EgoStateStamped,
     Environment,
     PredictedEnvironment,
     Vector2D,
 )
 
+<<<<<<< HEAD
 _YAW_RATE_MIN = 1e-9  # below this, treat turn rate as straight-line motion
 
 """
@@ -28,6 +36,15 @@ We run two sub-scenarios:
   A. Oncoming vehicle is far enough → overtake is SAFE.
   B. Oncoming vehicle is close      → overtake is NOT SAFE.
 """
+=======
+PredictionModel = Literal["constant_acceleration", "constant_turn_rate"]
+
+# Guard for near-zero yaw rate in CTRV: below this, use straight-line fallback.
+_YAW_RATE_MIN: float = 1e-4  # [rad/s]
+
+# Guard for near-zero acceleration norm in braking clamp.
+_ACCEL_NORM_SQ_MIN: float = 1e-9
+>>>>>>> feature/bicycle-only
 
 # Main role: check that the prediction horizon and time step can produce a valid timestamp grid.
 def _validate_prediction_inputs(prediction_horizon: int, dt: int) -> None:
@@ -41,7 +58,10 @@ def _validate_prediction_inputs(prediction_horizon: int, dt: int) -> None:
             f"prediction_horizon ({prediction_horizon}) must be divisible by dt ({dt})"
         )
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> feature/bicycle-only
 # Main role: convert scalar speed/acceleration into x and y components using the object's yaw.
 def _vector_from_motion(value, yaw: float) -> Vector2D:
     """
@@ -55,7 +75,10 @@ def _vector_from_motion(value, yaw: float) -> Vector2D:
         return value
     return Vector2D(x=float(value) * math.cos(yaw), y=float(value) * math.sin(yaw))
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> feature/bicycle-only
 # Main role: convert vector velocity back into one scalar speed value.
 def _speed_from_velocity(velocity) -> float:
     """
@@ -68,7 +91,10 @@ def _speed_from_velocity(velocity) -> float:
         return math.hypot(velocity.x, velocity.y)
     return abs(float(velocity))
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> feature/bicycle-only
 # Main role: predict one future position/velocity using constant acceleration and stop clamping.
 def _predict_constant_acceleration_step(
     position: Vector2D,
@@ -77,6 +103,7 @@ def _predict_constant_acceleration_step(
     time_s: float,
 ) -> tuple[Vector2D, Vector2D]:
     """
+<<<<<<< HEAD
     Predict one step and clamp braking objects at the stop point.
 
     Constant acceleration equations:
@@ -87,11 +114,32 @@ def _predict_constant_acceleration_step(
 
     Stop-time equation for braking:
         t_stop = -dot(v, a) / dot(a, a)
+=======
+    Predict one step from t=0 and clamp braking objects exactly at their stop point.
+
+    Constant acceleration kinematic equations:
+        x(t)  = x0 + vx0*t + 0.5*ax*t^2
+        y(t)  = y0 + vy0*t + 0.5*ay*t^2
+        vx(t) = vx0 + ax*t
+        vy(t) = vy0 + ay*t
+
+    Stop-time derivation (dot product form):
+        The object decelerates when dot(v, a) < 0.
+        Setting |v(t)| = 0 along the motion axis gives:
+            t_stop = -dot(v0, a) / dot(a, a)
+        If t_stop falls within [0, time_s], the object has stopped.
+        Position is evaluated at t_stop and velocity is clamped to zero.
+        This prevents the model from reversing a braking vehicle.
+>>>>>>> feature/bicycle-only
     """
     velocity_dot_accel = velocity.x * acceleration.x + velocity.y * acceleration.y
     acceleration_norm_sq = acceleration.x**2 + acceleration.y**2
 
+<<<<<<< HEAD
     if velocity_dot_accel < 0.0 and acceleration_norm_sq > 1e-9:
+=======
+    if velocity_dot_accel < 0.0 and acceleration_norm_sq > _ACCEL_NORM_SQ_MIN:
+>>>>>>> feature/bicycle-only
         stop_time_s = -velocity_dot_accel / acceleration_norm_sq
         if 0.0 <= stop_time_s <= time_s:
             stop_pos = Vector2D(
@@ -110,6 +158,7 @@ def _predict_constant_acceleration_step(
     )
     return new_pos, new_velocity
 
+<<<<<<< HEAD
 
 # Main role: predict one future position/velocity using constant speed and constant yaw rate.
 def _predict_constant_turn_step(
@@ -132,11 +181,62 @@ def _predict_constant_turn_step(
         y(t) = y0 + v*sin(yaw0)*t
     """
     if abs(yaw_rate) < _YAW_RATE_MIN:
+=======
+# Main role: predict one future position/yaw using the CTRV model.
+def _predict_ctrv_step(
+    position: Vector2D,
+    yaw: float,
+    speed: float,
+    yaw_rate: float,
+    time_s: float,
+) -> tuple[Vector2D, float]:
+    """
+    Predict one step using the Constant Turn Rate and Velocity (CTRV) model.
+
+    CTRV kinematic equations (exact closed-form integration of circular motion):
+        When |yaw_rate| >= _YAW_RATE_MIN:
+            x(t) = x0 + (v / ω) · ( sin(yaw0 + ω·t) - sin(yaw0) )
+            y(t) = y0 + (v / ω) · ( cos(yaw0) - cos(yaw0 + ω·t) )
+            yaw(t) = yaw0 + ω·t
+
+        When |yaw_rate| < _YAW_RATE_MIN  (straight-line Taylor limit):
+            x(t) = x0 + v·cos(yaw0)·t
+            y(t) = y0 + v·sin(yaw0)·t
+            yaw(t) = yaw0
+
+    Parameters
+
+    position  : current position in global frame [m]
+    yaw       : current heading [rad], 0 = east, counter-clockwise positive
+    speed     : longitudinal speed [m/s], always positive
+    yaw_rate  : ω, rate of heading change [rad/s],
+                positive = left turn, negative = right turn
+    time_s    : prediction time from t=0 [s]
+
+    Returns
+
+    new_pos   : predicted position in global frame [m]
+    new_yaw   : predicted heading [rad]
+
+    Note: speed is held constant (no longitudinal acceleration). For a turning + braking vehicle, combine this with
+                                                                 a longitudinal speed profile (future extension).
+    """
+    if abs(yaw_rate) >= _YAW_RATE_MIN:
+        new_yaw = yaw + yaw_rate * time_s
+        radius = speed / yaw_rate  # signed turning radius [m]
+        new_pos = Vector2D(
+            x=position.x + radius * (math.sin(new_yaw) - math.sin(yaw)),
+            y=position.y + radius * (math.cos(yaw) - math.cos(new_yaw)),
+        )
+    else:
+        # Straight-line fallback: Taylor expansion of CTRV as ω → 0
+>>>>>>> feature/bicycle-only
         new_yaw = yaw
         new_pos = Vector2D(
             x=position.x + speed * math.cos(yaw) * time_s,
             y=position.y + speed * math.sin(yaw) * time_s,
         )
+<<<<<<< HEAD
     else:
         new_yaw = yaw + yaw_rate * time_s
         new_pos = Vector2D(
@@ -150,6 +250,10 @@ def _predict_constant_turn_step(
     )
     return new_pos, new_yaw, new_velocity
 
+=======
+
+    return new_pos, new_yaw
+>>>>>>> feature/bicycle-only
 
 # Main role: compare two headings correctly even when angles wrap around +pi/-pi.
 def _angle_difference(a: float, b: float) -> float:
@@ -157,11 +261,18 @@ def _angle_difference(a: float, b: float) -> float:
     Return signed angle difference a - b wrapped to [-pi, pi].
 
     Equation:
+<<<<<<< HEAD
         delta = (a - b + pi) mod (2*pi) - pi
     """
     return (a - b + math.pi) % (2 * math.pi) - math.pi
 
 
+=======
+        delta = (a - b + pi) mod (2·pi) - pi
+    """
+    return (a - b + math.pi) % (2 * math.pi) - math.pi
+
+>>>>>>> feature/bicycle-only
 # Main role: express an object's position in the ego vehicle's local coordinate frame.
 def _object_relative_to_ego(obj: DynamicObjectStamped, ego_state: EgoStateStamped) -> Vector2D:
     """
@@ -170,8 +281,13 @@ def _object_relative_to_ego(obj: DynamicObjectStamped, ego_state: EgoStateStampe
     Equations:
         dx = obj_x - ego_x
         dy = obj_y - ego_y
+<<<<<<< HEAD
         x_ego =  dx*cos(yaw) + dy*sin(yaw)
         y_ego = -dx*sin(yaw) + dy*cos(yaw)
+=======
+        x_ego =  dx·cos(yaw) + dy·sin(yaw)    (forward axis)
+        y_ego = −dx·sin(yaw) + dy·cos(yaw)    (left axis)
+>>>>>>> feature/bicycle-only
     """
     dx = obj.state.pos.x - ego_state.state.pos.x
     dy = obj.state.pos.y - ego_state.state.pos.y
@@ -181,23 +297,41 @@ def _object_relative_to_ego(obj: DynamicObjectStamped, ego_state: EgoStateStampe
         y=-dx * math.sin(yaw) + dy * math.cos(yaw),
     )
 
+<<<<<<< HEAD
+=======
+# Core prediction models
+>>>>>>> feature/bicycle-only
 
 # Main role: generate future states for every object over the prediction horizon.
 def predict_motion_constant_acceleration(
     objects: List[DynamicObjectStamped],  # current dynamic objects from Environment.objects
     prediction_horizon: int,              # total prediction time [ms]
     dt: int,                              # prediction step size [ms]
+<<<<<<< HEAD
     last_only: bool = False,              # return only final state per object if True
 ) -> List[DynamicObjectStamped]:
     """Predict object motion over the horizon using constant acceleration."""
+=======
+) -> List[DynamicObjectStamped]:
+    """
+    Predict object motion over the horizon using constant acceleration.
+
+    Yaw is held constant (straight-line motion). For curved trajectories,
+    use predict_motion_constant_turn_rate instead.
+    """
+>>>>>>> feature/bicycle-only
     _validate_prediction_inputs(prediction_horizon, dt)
     predicted_objects: List[DynamicObjectStamped] = []
 
     for obj in objects:
         cs = obj.state
         velocity = _vector_from_motion(cs.velocity, cs.yaw)          # initial velocity [m/s]
+<<<<<<< HEAD
         acceleration = _vector_from_motion(cs.acceleration, cs.yaw)  # constant acceleration [m/s^2]
         predicted_states = []
+=======
+        acceleration = _vector_from_motion(cs.acceleration, cs.yaw)  # constant acceleration [m/s²]
+>>>>>>> feature/bicycle-only
 
         for t in range(0, prediction_horizon + dt, dt):
             time_s = t / 1000.0
@@ -207,8 +341,12 @@ def predict_motion_constant_acceleration(
                 acceleration=acceleration,
                 time_s=time_s,
             )
+<<<<<<< HEAD
 
             predicted_states.append(
+=======
+            predicted_objects.append(
+>>>>>>> feature/bicycle-only
                 DynamicObjectStamped(
                     timestamp=obj.timestamp + t,
                     state=DynamicObject(
@@ -220,6 +358,7 @@ def predict_motion_constant_acceleration(
                 )
             )
 
+<<<<<<< HEAD
         if last_only:
             predicted_objects.append(predicted_states[-1])
         else:
@@ -240,10 +379,51 @@ def predict_motion_constant_turn(
     _validate_prediction_inputs(prediction_horizon, dt)
     predicted_objects: List[DynamicObjectStamped] = []
     object_yaw_rates = object_yaw_rates or {}
+=======
+    return predicted_objects
+
+# Main role: generate future states using CTRV for objects that are turning.
+def predict_constant_turn(
+    objects: List[DynamicObjectStamped],  # current dynamic objects from Environment.objects
+    prediction_horizon: int,              # total prediction time [ms]
+    dt: int,                              # prediction step size [ms]
+    yaw_rates: Optional[Dict[int, float]] = None,  # object_id -> yaw_rate [rad/s]; 0 if absent
+) -> List[DynamicObjectStamped]:
+    """
+    Predict object motion over the horizon using the CTRV model.
+
+    CTRV (Constant Turn Rate and Velocity) tracks circular arc motion exactly.
+    It is more accurate than constant acceleration whenever an object is turning,
+    such as the oncoming vehicle negotiating a curve before reaching ego.
+
+    yaw_rates maps each object id to its measured yaw rate in rad/s.
+    A positive value means a left turn, negative means a right turn.
+    If an object id is not in yaw_rates, yaw_rate = 0 is assumed,
+    which degenerates to straight-line motion (same as constant velocity).
+
+    Speed is held constant (no longitudinal acceleration in this model).
+    For a turning + braking vehicle, extend by applying a speed profile
+    before calling this function.
+
+    Parameters
+
+    objects           : list of stamped dynamic objects at t=0
+    prediction_horizon: total time to predict [ms]
+    dt                : step size [ms]
+    yaw_rates         : optional dict mapping object id to yaw_rate [rad/s]
+    """
+    _validate_prediction_inputs(prediction_horizon, dt)
+
+    if yaw_rates is None:
+        yaw_rates = {}
+
+    predicted_objects: List[DynamicObjectStamped] = []
+>>>>>>> feature/bicycle-only
 
     for obj in objects:
         cs = obj.state
         speed = _speed_from_velocity(cs.velocity)
+<<<<<<< HEAD
         obj_yaw_rate = object_yaw_rates.get(cs.id, yaw_rate)
         predicted_states = []
 
@@ -258,17 +438,42 @@ def predict_motion_constant_turn(
             )
 
             predicted_states.append(
+=======
+        yaw_rate = yaw_rates.get(cs.id, 0.0)
+
+        for t in range(0, prediction_horizon + dt, dt):
+            time_s = t / 1000.0
+            new_pos, new_yaw = _predict_ctrv_step(
+                position=cs.pos,
+                yaw=cs.yaw,
+                speed=speed,
+                yaw_rate=yaw_rate,
+                time_s=time_s,
+            )
+            # Reconstruct velocity vector from new heading and constant speed
+            new_velocity = Vector2D(
+                x=speed * math.cos(new_yaw),
+                y=speed * math.sin(new_yaw),
+            )
+            predicted_objects.append(
+>>>>>>> feature/bicycle-only
                 DynamicObjectStamped(
                     timestamp=obj.timestamp + t,
                     state=DynamicObject(
                         id=cs.id, obj_class=cs.obj_class,
                         pos=new_pos, yaw=new_yaw,
+<<<<<<< HEAD
                         velocity=new_velocity, acceleration=cs.acceleration,
+=======
+                        velocity=new_velocity,
+                        acceleration=Vector2D(x=0.0, y=0.0),
+>>>>>>> feature/bicycle-only
                         width=cs.width, length=cs.length,
                     ),
                 )
             )
 
+<<<<<<< HEAD
         if last_only:
             predicted_objects.append(predicted_states[-1])
         else:
@@ -279,6 +484,15 @@ def predict_motion_constant_turn(
 # Main role: reorganize flat predictions into object_id -> list of predicted states.
 def group_predictions_by_object(
     predicted_objects: List[DynamicObjectStamped],  # flat list of predictions for all objects
+=======
+    return predicted_objects
+
+# Environment predictions
+
+# Main role: reorganize flat predictions into object_id -> list of predicted states.
+def group_predictions_by_object(
+    predicted_objects: List[DynamicObjectStamped],
+>>>>>>> feature/bicycle-only
 ) -> Dict[int, List[DynamicObjectStamped]]:
     """Convert flat predictions into object_id -> predicted states."""
     grouped: Dict[int, List[DynamicObjectStamped]] = {}
@@ -288,6 +502,7 @@ def group_predictions_by_object(
 
 # Main role: build a PredictedEnvironment from the current Environment.
 def predict_environment(
+<<<<<<< HEAD
     environment: Environment,                 # current scene with dynamic objects and lanes
     prediction_horizon: int,                  # total prediction time [ms]
     dt: int,                                  # prediction step size [ms]
@@ -310,6 +525,40 @@ def predict_environment(
         )
     else:
         raise ValueError(f"Unknown prediction model: {model}")
+=======
+    environment: Environment,
+    prediction_horizon: int,
+    dt: int,
+    model: PredictionModel = "constant_acceleration",
+    yaw_rates: Optional[Dict[int, float]] = None,
+) -> PredictedEnvironment:
+    """
+    Predict every object in the environment and return a PredictedEnvironment.
+
+    model = "constant_acceleration" : straight-line, handles braking correctly.
+    model = "constant_turn_rate"    : CTRV, handles curved trajectories correctly.
+
+    yaw_rates is only used when model = "constant_turn_rate".
+    Pass a dict mapping object_id -> measured yaw_rate [rad/s].
+
+    Raises ValueError if the environment contains no objects, because an empty
+    prediction would cause is_overtake_gap_safe to return True vacuously.
+    """
+    if not environment.objects:
+        raise ValueError("Empty object list — prediction would be vacuously safe.")
+
+    if model == "constant_acceleration":
+        raw = predict_motion_constant_acceleration(
+            environment.objects, prediction_horizon, dt
+        )
+    elif model == "constant_turn_rate":
+        raw = predict_constant_turn(
+            environment.objects, prediction_horizon, dt, yaw_rates=yaw_rates
+        )
+    else:
+        raise ValueError(f"Unknown prediction model: {model!r}")
+
+>>>>>>> feature/bicycle-only
     return PredictedEnvironment(
         objects=group_predictions_by_object(raw),
         lanes=environment.lanes,
@@ -320,9 +569,15 @@ def predict_environment(
 # Main role: retrieve all predicted objects at one exact timestamp.
 def objects_at_time(
     predicted_environment: PredictedEnvironment,
+<<<<<<< HEAD
     timestamp: int,  # timestamp to query [ms]
 ) -> List[DynamicObjectStamped]:
     """Return predicted objects that exist exactly at timestamp."""
+=======
+    timestamp: int,
+) -> List[DynamicObjectStamped]:
+    """Return predicted objects that exist exactly at timestamp [ms]."""
+>>>>>>> feature/bicycle-only
     result = []
     for preds in predicted_environment.objects.values():
         result.extend(obj for obj in preds if obj.timestamp == timestamp)
@@ -333,6 +588,7 @@ def point_distance(x1: float, y1: float, x2: float, y2: float) -> float:
     """Euclidean distance between two points."""
     return math.hypot(x2 - x1, y2 - y1)
 
+<<<<<<< HEAD
 # Main role: return the scalar speed of one predicted object.
 def object_speed(obj: DynamicObjectStamped) -> float:
     """Return predicted object speed [m/s]."""
@@ -349,20 +605,59 @@ def find_lead_vehicle(
     for obj in environment.objects:
         rel = _object_relative_to_ego(obj, ego_state)
         if rel.x > 0.0 and abs(rel.y) <= lane_y_tolerance:
+=======
+
+# Main role: find the closest vehicle ahead of ego in the same lane.
+def find_lead_vehicle(
+    environment: Environment,
+    ego_state: EgoStateStamped,
+    lane_y_tolerance: float = 2.0,
+    max_lookahead_m: float = 150.0,
+) -> Optional[DynamicObjectStamped]:
+    """
+    Find the closest object ahead of ego in the same lane.
+
+    lane_y_tolerance  : max lateral offset to count as same lane [m]
+    max_lookahead_m   : ignore objects further than this distance ahead [m]
+                        Prevents reacting to irrelevant distant traffic.
+    """
+    candidates = []
+    for obj in environment.objects:
+        rel = _object_relative_to_ego(obj, ego_state)
+        if 0.0 < rel.x <= max_lookahead_m and abs(rel.y) <= lane_y_tolerance:
+>>>>>>> feature/bicycle-only
             candidates.append((rel.x, obj))
     return min(candidates, key=lambda item: item[0])[1] if candidates else None
 
 # Main role: find the closest vehicle ahead of ego that is driving in the opposite direction.
 def find_oncoming_vehicle(
+<<<<<<< HEAD
     environment: Environment,                  # current scene
     ego_state: EgoStateStamped,                # ego pose used as reference
     opposite_lane_y_tolerance: float = 4.0,    # lateral search band for opposite lane [m]
 ) -> Optional[DynamicObjectStamped]:
     """Find closest object ahead of ego that is moving in the opposite direction."""
+=======
+    environment: Environment,
+    ego_state: EgoStateStamped,
+    opposite_lane_y_tolerance: float = 4.0,
+    max_lookahead_m: float = 150.0,
+) -> Optional[DynamicObjectStamped]:
+    """
+    Find the closest object ahead of ego moving in the opposite direction.
+
+    opposite_lane_y_tolerance : lateral search band covering the oncoming lane [m]
+    max_lookahead_m           : ignore objects further than this distance ahead [m]
+
+    Heading check: |angle_difference(obj_yaw, ego_yaw)| > pi/2 means the object
+    is travelling more than 90° away from ego — i.e. oncoming.
+    """
+>>>>>>> feature/bicycle-only
     candidates = []
     for obj in environment.objects:
         rel = _object_relative_to_ego(obj, ego_state)
         heading_delta = abs(_angle_difference(obj.state.yaw, ego_state.state.yaw))
+<<<<<<< HEAD
         if rel.x > 0.0 and abs(rel.y) <= opposite_lane_y_tolerance and heading_delta > math.pi / 2:
             candidates.append((rel.x, obj))
     return min(candidates, key=lambda item: item[0])[1] if candidates else None
@@ -378,6 +673,34 @@ def predict_overtake_environment(
     object_yaw_rates: Optional[Dict[int, float]] = None,  # per-object yaw rates for constant_turn
 ) -> PredictedEnvironment:
     """Predict only the lead and oncoming vehicles relevant to overtaking."""
+=======
+        if (
+            0.0 < rel.x <= max_lookahead_m
+            and abs(rel.y) <= opposite_lane_y_tolerance
+            and heading_delta > math.pi / 2
+        ):
+            candidates.append((rel.x, obj))
+    return min(candidates, key=lambda item: item[0])[1] if candidates else None
+
+# Overtake specific prediction
+
+# Main role: predict only the lead and oncoming vehicles needed for an overtake decision.
+def predict_overtake_environment(
+    environment: Environment,
+    ego_state: EgoStateStamped,
+    prediction_horizon: int,
+    dt: int,
+    model: PredictionModel = "constant_acceleration",
+    yaw_rates: Optional[Dict[int, float]] = None,
+) -> PredictedEnvironment:
+    """
+    Predict only the lead and oncoming vehicles relevant to overtaking.
+
+    Use model="constant_turn_rate" when either vehicle is on a curved road
+    and a measured yaw_rate is available from the sensor pipeline.
+    Pass yaw_rates as {object_id: measured_yaw_rate_rad_per_s}.
+    """
+>>>>>>> feature/bicycle-only
     lead = find_lead_vehicle(environment, ego_state)
     oncoming = find_oncoming_vehicle(environment, ego_state)
     relevant = [obj for obj in (lead, oncoming) if obj is not None]
@@ -388,6 +711,7 @@ def predict_overtake_environment(
         prediction_horizon=prediction_horizon,
         dt=dt,
         model=model,
+<<<<<<< HEAD
         yaw_rate=yaw_rate,
         object_yaw_rates=object_yaw_rates,
     )
@@ -408,6 +732,32 @@ def is_overtake_gap_safe(
     the ego vehicle by at least safety_distance at every checked timestamp in
     the overtake window. This prevents starting the overtake before the
     oncoming vehicle has passed.
+=======
+        yaw_rates=yaw_rates,
+    )
+
+# Main role: verify if the opposite vehicle has passed behind ego by the required safety distance.
+def is_overtake_gap_safe(
+    predicted_environment: PredictedEnvironment,
+    ego_trajectory: List[EgoStateStamped],
+    lead_vehicle_id: int,
+    overtake_start_ms: int,
+    overtake_duration_ms: int,
+    safety_distance: float,
+) -> bool:
+    """
+    Return True only if oncoming vehicles stay farther than safety_distance
+    from ego throughout the entire overtake window.
+
+    The lead vehicle is excluded by id. Proximity to it is expected
+    during overtake and is managed by the lateral planner.
+
+    ego_trajectory must contain a state for every timestamp in the window
+    at the same dt as predicted_environment, otherwise a ValueError is raised.
+
+    This is a prediction level gap check. The planner must still produce
+    and collision-check the actual ego trajectory.
+>>>>>>> feature/bicycle-only
     """
     end_ms = overtake_start_ms + overtake_duration_ms
     ego_by_ts: Dict[int, EgoStateStamped] = {es.timestamp: es for es in ego_trajectory}
@@ -415,6 +765,7 @@ def is_overtake_gap_safe(
     for ts in range(overtake_start_ms, end_ms + predicted_environment.dt, predicted_environment.dt):
         ego_state = ego_by_ts.get(ts)
         if ego_state is None:
+<<<<<<< HEAD
             raise ValueError(f"ego_trajectory missing timestamp {ts} ms.")
         for obj in objects_at_time(predicted_environment, ts):
             if obj.state.id == lead_vehicle_id:
@@ -741,3 +1092,19 @@ def run_demo() -> None:
 
 if __name__ == "__main__":
     run_demo()
+=======
+            raise ValueError(
+                f"ego_trajectory missing timestamp {ts} ms. "
+                f"Ensure it covers the full overtake window at dt={predicted_environment.dt} ms."
+            )
+        for obj in objects_at_time(predicted_environment, ts):
+            if obj.state.id == lead_vehicle_id:
+                continue
+            dist = point_distance(
+                ego_state.state.pos.x, ego_state.state.pos.y,
+                obj.state.pos.x, obj.state.pos.y,
+            )
+            if dist < safety_distance:
+                return False
+    return True
+>>>>>>> feature/bicycle-only

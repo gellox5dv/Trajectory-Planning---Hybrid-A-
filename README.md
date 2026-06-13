@@ -396,13 +396,21 @@ class Controller:
         Initializes the Controller.
         """
 
+<<<<<<< HEAD
     def calc_acceleration(Ego: EgoStateStamped, params: VehicleParameters, Waypoints: Trajectory) -> float:
+=======
+    def calc_acceleration(Ego: EgoStateStamped, veh_cfg: DictConfig , Waypoints: Trajectory) -> float:
+>>>>>>> feature/bicycle-only
         """
         Calculate the acceleration, given the Trajectory.
         """
 
 
+<<<<<<< HEAD
     def calc_steer_rate(Ego: EgoStateStamped, params: VehicleParameters, Waypoints: Trajectory) -> float:
+=======
+    def calc_steer_rate(Ego: EgoStateStamped, veh_cfg: DictConfig, Waypoints: Trajectory) -> float:
+>>>>>>> feature/bicycle-only
         """
         Calculate the steering-rate, given the Trajectory.
         """

@@ -1,10 +1,18 @@
 from models.models import *
 from anytree import NodeMixin
 from anytree.search import findall
+<<<<<<< HEAD
 from motion_primitives import MotionPrimitive
 from motion_primitives import get_motion_primitives
 from state_node import StateNode
 from shapely.geometry import Polygon
+=======
+from planner.motion_primitives import MotionPrimitive
+from planner.motion_primitives import get_motion_primitives
+from planner.state_node import StateNode
+from shapely.geometry import Polygon
+from motion.bicycle import kinematic_bicycle
+>>>>>>> feature/bicycle-only
 import heapq
 import math
 from omegaconf import DictConfig, OmegaConf
@@ -74,7 +82,11 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
         total_cost=0.0,
         detailed_costs=None,
         goal_region_reached=False,
+<<<<<<< HEAD
         depth=0,
+=======
+         node_depth=0,
+>>>>>>> feature/bicycle-only
         parent=None
     )
     
@@ -102,15 +114,28 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
             veh_cfg=cfg.vehicle,
             velocity_limit=request.target_speed,
             acceleration=get_magnitude(prev_stamped_state.state.acceleration),
+<<<<<<< HEAD
             mp_cfg=cfg.motion_primitives
+=======
+            mp_cfg=cfg.motion_primitives,
+            internal_dt=cfg.planner.dt_sim
+>>>>>>> feature/bicycle-only
         )
         
         # Expand the current node using the generated primitives
         for mp in motion_primitives:
             
+<<<<<<< HEAD
             # TODO: Propagate state using the bicycle model
             # curr_state = bicycle_model(prev_stamped_state, mp, cfg.planner.dt_sim)
             curr_state = prev_stamped_state
+=======
+            # Propagate state using the bicycle model
+            curr_state = kinematic_bicycle(stamped_state=prev_stamped_state, 
+                                           control=EgoInput(mp.steering_angle,mp.acceleration), 
+                                           dt=mp.dt, 
+                                           vehicle_params=cfg.vehicle)
+>>>>>>> feature/bicycle-only
             
             # Accumulated cost up to the start of this new edge
             path_cost = prev_node.path_cost + prev_node.node_cost
@@ -154,13 +179,21 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
                 total_cost=total_cost,
                 detailed_costs=detailed_costs,
                 goal_region_reached=goal_region_reached,
+<<<<<<< HEAD
                 depth=prev_node.depth + 1,
+=======
+                node_depth=prev_node.node_depth + 1,
+>>>>>>> feature/bicycle-only
                 parent=prev_node,
                 motion_primitive=mp
             )
             
             # Sort the node into the appropriate queue based on termination conditions
+<<<<<<< HEAD
             if not new_node.goal_region_reached and new_node.depth < max_depth:
+=======
+            if not new_node.goal_region_reached and new_node.node_depth < max_depth:
+>>>>>>> feature/bicycle-only
                 heapq.heappush(open_nodes_pq, new_node)
             else:
                 # Goal reached or max depth exceeded; consider this an end node

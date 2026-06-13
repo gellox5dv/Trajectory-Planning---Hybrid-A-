@@ -10,4 +10,13 @@ dt_output: 300            # Output resolution (multiple of dt_sim) [ms]
 # Constraints
 # ---------------------------------------------------------
 max_compute_time: 100     # Time budget [ms]
+<<<<<<< HEAD
 extract_path_time: 1
+=======
+extract_path_time: 1
+
+# ---------------------------------------------------------
+# Goal Region
+# ---------------------------------------------------------
+horizon_increment: 0.2    # Increment on the planning horizon for the Goal Region in percent
+>>>>>>> feature/bicycle-only

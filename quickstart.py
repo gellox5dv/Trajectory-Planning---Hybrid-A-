@@ -16,10 +16,16 @@ def install_packages():
     packages = [
         "anytree",
         "hydra-core",
+<<<<<<< HEAD
         "matplotlib",
         "numpy",
         "pyyaml",
         "shapely"
+=======
+        "shapely",
+        "matplotlib",
+        "casadi"
+>>>>>>> feature/bicycle-only
     ]
 
     for package in packages:
@@ -32,4 +38,8 @@ def install_packages():
     print("==========================================")
 
 if __name__ == "__main__":
+<<<<<<< HEAD
     install_packages()
+=======
+    install_packages()
+>>>>>>> feature/bicycle-only

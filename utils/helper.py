@@ -1,7 +1,11 @@
 from math import cos, pi, sin, hypot
 from typing import List, Optional, Tuple
 from configparser import ConfigParser
+<<<<<<< HEAD
 from models.models import Vector2D, VehicleParameters, EgoStateStamped
+=======
+from models.models import Vector2D, EgoStateStamped, Lane, GoalRegion
+>>>>>>> feature/bicycle-only
 import copy
 
 
@@ -62,6 +66,7 @@ def check_line_intersection(p1: Vector2D, p2: Vector2D, p3: Vector2D, p4: Vector
     return (0 <= t <= 1) and (0 <= u <= 1)
 
 
+<<<<<<< HEAD
 def load_vehicle_parameters() -> VehicleParameters:
     """Load vehicle parameters from the configuration file."""
 
@@ -89,10 +94,19 @@ def load_vehicle_parameters() -> VehicleParameters:
         mu = config.getfloat('vehicle', 'mu')
     )
 
+=======
+>>>>>>> feature/bicycle-only
 def get_magnitude(vector: Vector2D) -> float:
     return hypot(vector.x, vector.y)
 
 
+<<<<<<< HEAD
+=======
+def get_vector(magnitude: float, direction: float) -> Vector2D:
+    return Vector2D(x = magnitude * cos(direction), y = magnitude * sin(direction))
+
+
+>>>>>>> feature/bicycle-only
 def shift_rear_axle_to_cg(state_stamped: EgoStateStamped, lr: float) -> EgoStateStamped:
     """
     Shifts the vehicle's position from the center of the rear axle to the center of gravity (CG).
@@ -137,3 +151,73 @@ def shift_cg_to_rear_axle(state_stamped: EgoStateStamped, lr: float) -> EgoState
     new_stamped.state.pos.y -= lr * sin(yaw)
     
     return new_stamped
+<<<<<<< HEAD
+=======
+
+
+def get_nearest_lane_center(ego_state: EgoStateStamped, lanes: List[Lane]) -> Tuple[float, Vector2D]:
+    """
+    Find the nearest lane center point to the ego vehicle.
+    
+    Args:
+        ego_state (EgoStateStamped): The current state of the ego vehicle.
+        lanes (List[Lane]): A list of available lanes.
+
+    Returns:
+        float: The yaw of the nearest lane center point.
+        Vector2D: The position of the nearest lane center point.
+    """
+    
+    min_dist = float('inf')
+    nearest_point = Vector2D(x=0.0, y=0.0)
+    nearest_lane_yaw = 0.0
+
+    for lane in lanes:
+        for point, yaw in lane.centerline:
+            dist = hypot(ego_state.state.pos.x - point.x, ego_state.state.pos.y - point.y)
+            if dist < min_dist:
+                min_dist = dist
+                nearest_point = point
+                nearest_lane_yaw = yaw
+
+    return nearest_lane_yaw, nearest_point
+
+
+def get_goal_region(
+        curr_ego_state: EgoStateStamped,
+        lanes: List[Lane],
+        horizon: int,
+        length: float,
+        width: float,
+    ) -> GoalRegion:
+    """
+    Get the goal region which is horizon seconds ahead in the same lane as the ego vehicle.
+
+    Args:
+        curr_ego_state (EgoStateStamped): The current state of the ego vehicle.
+        lanes (List[Lane]): A list of available lanes.
+        horizon (float): The time horizon to look ahead [ms].
+        length (float): The length of the goal region [m].
+        width (float): The width of the goal region [m].
+
+    Returns:
+        GoalRegion: The computed goal region.
+    """
+
+    nearest_lane_yaw, nearest_lane_center = get_nearest_lane_center(curr_ego_state, lanes)
+
+    curr_vel = curr_ego_state.state.velocity
+    curr_vel_magnitude = hypot(curr_vel.x, curr_vel.y)
+
+    distance_ahead = curr_vel_magnitude * horizon / 1000.0
+
+    goal_center_x = nearest_lane_center.x + distance_ahead * cos(nearest_lane_yaw)
+    goal_center_y = nearest_lane_center.y + distance_ahead * sin(nearest_lane_yaw)
+
+    return GoalRegion(
+        center=Vector2D(x=goal_center_x, y=goal_center_y),
+        length=length,
+        width=width,
+        yaw=nearest_lane_yaw
+    )
+>>>>>>> feature/bicycle-only
