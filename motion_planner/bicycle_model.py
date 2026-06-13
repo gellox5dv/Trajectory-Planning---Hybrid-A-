@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional, List, Tuple, Dict
 import hydra
 import yaml
+from omegaconf import DictConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -19,7 +20,6 @@ from models.models import (
     EgoInput,
     EgoState,
     EgoStateStamped,
-    VehicleParameters,
     Vector2D,
 )
 
@@ -40,22 +40,22 @@ config = load_cost_config()
 def bicycle_model(
     state:   EgoStateStamped,
     control: EgoInput,
-    params:  VehicleParameters,
+    veh_cfg: DictConfig,
     dt:      float
 ) -> EgoStateStamped:
-    
+   
     steer_new = state.steer + control.steer_rate * dt
-    steer_new = np.clip(steer_new, -params.max_steer, params.max_steer)
-
+    steer_new = np.clip(steer_new, -veh_cfg.max_steer, veh_cfg.max_steer)
+ 
     acc_clamped = np.clip(control.acceleration,
-                          -params.max_deceleration,
-                           params.max_acceleration)
+                          -veh_cfg.max_deceleration,
+                           veh_cfg.max_acceleration)
     v_new = max(state.v + acc_clamped * dt, 0.0)
-
+ 
     if v_new > 1e-3:
-        Cf, Cr   = params.Cf, params.Cr
-        lf, lr   = params.lf, params.lr
-        m, Iz, v = params.m, params.Iz, v_new
+        Cf, Cr   = veh_cfg.Cf, veh_cfg.Cr
+        lf, lr   = veh_cfg.lf, veh_cfg.lr
+        m, Iz, v = veh_cfg.m, veh_cfg.Iz, v_new
 
         A11 = -(Cf + Cr) / (m * v)
         A12 = (-lf * Cf + lr * Cr) / (m * v**2) - 1.0
@@ -442,7 +442,7 @@ class Vehicle:
 
 class DynamicBicycleModel:
 
-    def __init__(self, params: VehicleParameters) -> None:
+    def __init__(self, params: DictConfig) -> None:
         self.params = params
 
     def step(self, state: DynamicState, control: EgoInput, dt: float) -> DynamicState:
