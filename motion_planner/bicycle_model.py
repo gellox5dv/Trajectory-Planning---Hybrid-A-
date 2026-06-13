@@ -22,6 +22,7 @@ from models.models import (
     EgoStateStamped,
     Vector2D,
 )
+from utils.helper import get_magnitude, get_vector
 
 DEFAULT_COST_CONFIG_PATH = Path(__file__).parent / ".." / "configs" / "cost" / "default_cost_config.yaml"
 
@@ -43,19 +44,33 @@ def bicycle_model(
     veh_cfg: DictConfig,
     dt:      float
 ) -> EgoStateStamped:
-   
-    steer_new = state.steer + control.steer_rate * dt
-    steer_new = np.clip(steer_new, -veh_cfg.max_steer, veh_cfg.max_steer)
+
+    current_state = state.state
+    steering_angle_delta = control.steering_angle - current_state.steering_angle
+    steering_angle_delta = np.clip(
+        steering_angle_delta,
+        -veh_cfg.max_steer_rate * dt,
+        veh_cfg.max_steer_rate * dt,
+    )
+    steering_angle_new = current_state.steering_angle + steering_angle_delta
+    steering_angle_new = np.clip(
+        steering_angle_new,
+        -veh_cfg.max_steer,
+        veh_cfg.max_steer,
+    )
  
     acc_clamped = np.clip(control.acceleration,
                           -veh_cfg.max_deceleration,
                            veh_cfg.max_acceleration)
-    v_new = max(state.v + acc_clamped * dt, 0.0)
+    velocity_new_magnitude = max(
+        get_magnitude(current_state.velocity) + acc_clamped * dt,
+        0.0,
+    )
  
-    if v_new > 1e-3:
+    if velocity_new_magnitude > 1e-3:
         Cf, Cr   = veh_cfg.Cf, veh_cfg.Cr
         lf, lr   = veh_cfg.lf, veh_cfg.lr
-        m, Iz, v = veh_cfg.m, veh_cfg.Iz, v_new
+        m, Iz, v = veh_cfg.m, veh_cfg.Iz, velocity_new_magnitude
 
         A11 = -(Cf + Cr) / (m * v)
         A12 = (-lf * Cf + lr * Cr) / (m * v**2) - 1.0
@@ -64,11 +79,11 @@ def bicycle_model(
         B1  = Cf / (m * v)
         B2  = lf * Cf / Iz
 
-        beta    = state.beta
-        psi_dot = state.yaw_rate
+        beta    = 0.0
+        psi_dot = 0.0
 
-        beta_dot = A11 * beta + A12 * psi_dot + B1 * steer_new
-        psi_ddot = A21 * beta + A22 * psi_dot + B2 * steer_new
+        beta_dot = A11 * beta + A12 * psi_dot + B1 * steering_angle_new
+        psi_ddot = A21 * beta + A22 * psi_dot + B2 * steering_angle_new
 
         beta_new    = beta    + beta_dot * dt
         psi_dot_new = psi_dot + psi_ddot * dt
@@ -76,29 +91,30 @@ def bicycle_model(
         beta_new    = 0.0
         psi_dot_new = 0.0
 
-    yaw_new = state.yaw + psi_dot_new * dt
+    yaw_new = current_state.yaw + psi_dot_new * dt
     yaw_new = (yaw_new + math.pi) % (2 * math.pi) - math.pi
 
-    x_new = state.x + v_new * np.cos(beta_new + state.yaw) * dt
-    y_new = state.y + v_new * np.sin(beta_new + state.yaw) * dt
+    x_new = (
+        current_state.pos.x
+        + velocity_new_magnitude * np.cos(beta_new + current_state.yaw) * dt
+    )
+    y_new = (
+        current_state.pos.y
+        + velocity_new_magnitude * np.sin(beta_new + current_state.yaw) * dt
+    )
+    velocity_new = get_vector(velocity_new_magnitude, yaw_new)
+    acceleration_new = get_vector(float(acc_clamped), yaw_new)
 
-    next_state = EgoStateStamped(
+    return EgoStateStamped(
         timestamp=state.timestamp + dt,
         state=EgoState(
             pos=Vector2D(x=x_new, y=y_new),
+            velocity=velocity_new,
+            acceleration=acceleration_new,
             yaw=yaw_new,
-            velocity=v_new,
-            steering_angle=steer_new,
+            steering_angle=steering_angle_new,
         ),
     )
-    next_state.x = x_new
-    next_state.y = y_new
-    next_state.yaw = yaw_new
-    next_state.v = v_new
-    next_state.steer = steer_new
-    next_state.beta = beta_new
-    next_state.yaw_rate = psi_dot_new
-    return next_state
 
 #  ─ OVERTAKE MANOEUVRE ─
 
@@ -446,14 +462,19 @@ class DynamicBicycleModel:
         self.params = params
 
     def step(self, state: DynamicState, control: EgoInput, dt: float) -> DynamicState:
-        
-        steer_new = state.steer + control.steer_rate * dt
+        steering_angle = np.clip(
+            control.steering_angle,
+            -self.params.max_steer,
+            self.params.max_steer,
+        )
+        vx = state.velocity.x
+        vy = state.velocity.y
 
-        if abs(state.vx) > 1e-6:
-            alpha_f = steer_new - np.arctan2(
-                state.vy + self.params.lf * state.yaw_rate, state.vx)
+        if abs(vx) > 1e-6:
+            alpha_f = steering_angle - np.arctan2(
+                vy + self.params.lf * state.yaw_rate, vx)
             alpha_r = -np.arctan2(
-                state.vy - self.params.lr * state.yaw_rate, state.vx)
+                vy - self.params.lr * state.yaw_rate, vx)
         else:
             alpha_f = 0.0
             alpha_r = 0.0
@@ -464,29 +485,22 @@ class DynamicBicycleModel:
         ay       = (F_yf + F_yr) / self.params.m
         yaw_ddot = (self.params.lf * F_yf - self.params.lr * F_yr) / self.params.Iz
 
-        vx_new       = state.vx + (ax - state.vy * state.yaw_rate) * dt
-        vy_new       = state.vy + (ay + state.vx * state.yaw_rate) * dt
+        vx_new       = vx + (ax - vy * state.yaw_rate) * dt
+        vy_new       = vy + (ay + vx * state.yaw_rate) * dt
         yaw_rate_new = state.yaw_rate + yaw_ddot * dt
 
-        x_new   = state.x + (state.vx * np.cos(state.yaw)
-                              - state.vy * np.sin(state.yaw)) * dt
-        y_new   = state.y + (state.vx * np.sin(state.yaw)
-                              + state.vy * np.cos(state.yaw)) * dt
+        x_new   = state.pos.x + (vx * np.cos(state.yaw)
+                                  - vy * np.sin(state.yaw)) * dt
+        y_new   = state.pos.y + (vx * np.sin(state.yaw)
+                                  + vy * np.cos(state.yaw)) * dt
         yaw_new = state.yaw + state.yaw_rate * dt
 
-        next_state = DynamicState(
+        return DynamicState(
             pos=Vector2D(x=x_new, y=y_new),
             yaw=yaw_new,
             velocity=Vector2D(x=vx_new, y=vy_new),
             yaw_rate=yaw_rate_new,
         )
-        next_state.x = x_new
-        next_state.y = y_new
-        next_state.vx = vx_new
-        next_state.vy = vy_new
-        next_state.steer = steer_new
-        next_state.timestamp = state.timestamp + dt
-        return next_state
 
 """
 #  ─ MAIN ─
