@@ -14,6 +14,7 @@ from models.models import (
     PredictedEnvironment,
     Vector2D,
 )
+from utils.helper import get_magnitude, get_vector, global_to_ego_axis
 
 PredictionModel = Literal["constant_acceleration", "constant_turn_rate"]
 
@@ -34,31 +35,6 @@ def _validate_prediction_inputs(prediction_horizon: int, dt: int) -> None:
         raise ValueError(
             f"prediction_horizon ({prediction_horizon}) must be divisible by dt ({dt})"
         )
-
-# Main role: convert scalar speed/acceleration into x and y components using the object's yaw.
-def _vector_from_motion(value, yaw: float) -> Vector2D:
-    """
-    Convert scalar longitudinal motion or Vector2D motion into x/y components.
-
-    Equations:
-        vx = v * cos(yaw)
-        vy = v * sin(yaw)
-    """
-    if isinstance(value, Vector2D):
-        return value
-    return Vector2D(x=float(value) * math.cos(yaw), y=float(value) * math.sin(yaw))
-
-# Main role: convert vector velocity back into one scalar speed value.
-def _speed_from_velocity(velocity) -> float:
-    """
-    Return scalar speed from either Vector2D velocity or scalar velocity.
-
-    Equation:
-        speed = sqrt(vx^2 + vy^2)
-    """
-    if isinstance(velocity, Vector2D):
-        return math.hypot(velocity.x, velocity.y)
-    return abs(float(velocity))
 
 # Main role: predict one future position/velocity using constant acceleration and stop clamping.
 def _predict_constant_acceleration_step(
@@ -162,35 +138,6 @@ def _predict_ctrv_step(
 
     return new_pos, new_yaw
 
-# Main role: compare two headings correctly even when angles wrap around +pi/-pi.
-def _angle_difference(a: float, b: float) -> float:
-    """
-    Return signed angle difference a - b wrapped to [-pi, pi].
-
-    Equation:
-        delta = (a - b + pi) mod (2·pi) - pi
-    """
-    return (a - b + math.pi) % (2 * math.pi) - math.pi
-
-# Main role: express an object's position in the ego vehicle's local coordinate frame.
-def _object_relative_to_ego(obj: DynamicObjectStamped, ego_state: EgoStateStamped) -> Vector2D:
-    """
-    Transform object position from global frame into ego-local frame.
-
-    Equations:
-        dx = obj_x - ego_x
-        dy = obj_y - ego_y
-        x_ego =  dx·cos(yaw) + dy·sin(yaw)    (forward axis)
-        y_ego = −dx·sin(yaw) + dy·cos(yaw)    (left axis)
-    """
-    dx = obj.state.pos.x - ego_state.state.pos.x
-    dy = obj.state.pos.y - ego_state.state.pos.y
-    yaw = ego_state.state.yaw
-    return Vector2D(
-        x=dx * math.cos(yaw) + dy * math.sin(yaw),
-        y=-dx * math.sin(yaw) + dy * math.cos(yaw),
-    )
-
 # Core prediction models
 
 # Main role: generate future states for every object over the prediction horizon.
@@ -210,8 +157,16 @@ def predict_motion_constant_acceleration(
 
     for obj in objects:
         cs = obj.state
-        velocity = _vector_from_motion(cs.velocity, cs.yaw)          # initial velocity [m/s]
-        acceleration = _vector_from_motion(cs.acceleration, cs.yaw)  # constant acceleration [m/s²]
+        velocity = (
+            cs.velocity
+            if isinstance(cs.velocity, Vector2D)
+            else get_vector(float(cs.velocity), cs.yaw)
+        )
+        acceleration = (
+            cs.acceleration
+            if isinstance(cs.acceleration, Vector2D)
+            else get_vector(float(cs.acceleration), cs.yaw)
+        )
 
         for t in range(0, prediction_horizon + dt, dt):
             time_s = t / 1000.0
@@ -274,7 +229,11 @@ def predict_constant_turn(
 
     for obj in objects:
         cs = obj.state
-        speed = _speed_from_velocity(cs.velocity)
+        speed = (
+            get_magnitude(cs.velocity)
+            if isinstance(cs.velocity, Vector2D)
+            else abs(float(cs.velocity))
+        )
         yaw_rate = yaw_rates.get(cs.id, 0.0)
 
         for t in range(0, prediction_horizon + dt, dt):
@@ -286,11 +245,8 @@ def predict_constant_turn(
                 yaw_rate=yaw_rate,
                 time_s=time_s,
             )
-            # Reconstruct velocity vector from new heading and constant speed
-            new_velocity = Vector2D(
-                x=speed * math.cos(new_yaw),
-                y=speed * math.sin(new_yaw),
-            )
+            # Reconstruct velocity vector from new heading and constant speed.
+            new_velocity = get_vector(speed, new_yaw)
             predicted_objects.append(
                 DynamicObjectStamped(
                     timestamp=obj.timestamp + t,
@@ -298,7 +254,7 @@ def predict_constant_turn(
                         id=cs.id, obj_class=cs.obj_class,
                         pos=new_pos, yaw=new_yaw,
                         velocity=new_velocity,
-                        acceleration=Vector2D(x=0.0, y=0.0),
+                        acceleration=get_vector(0.0, new_yaw),
                         width=cs.width, length=cs.length,
                     ),
                 )
@@ -370,12 +326,6 @@ def objects_at_time(
         result.extend(obj for obj in preds if obj.timestamp == timestamp)
     return result
 
-# Main role: compute straight-line distance between two 2D points.
-def point_distance(x1: float, y1: float, x2: float, y2: float) -> float:
-    """Euclidean distance between two points."""
-    return math.hypot(x2 - x1, y2 - y1)
-
-
 # Main role: find the closest vehicle ahead of ego in the same lane.
 def find_lead_vehicle(
     environment: Environment,
@@ -392,9 +342,15 @@ def find_lead_vehicle(
     """
     candidates = []
     for obj in environment.objects:
-        rel = _object_relative_to_ego(obj, ego_state)
-        if 0.0 < rel.x <= max_lookahead_m and abs(rel.y) <= lane_y_tolerance:
-            candidates.append((rel.x, obj))
+        rel_x, rel_y, _ = global_to_ego_axis(
+            obj.state.pos.x,
+            obj.state.pos.y,
+            ego_state.state.pos.x,
+            ego_state.state.pos.y,
+            ego_state.state.yaw,
+        )
+        if 0.0 < rel_x <= max_lookahead_m and abs(rel_y) <= lane_y_tolerance:
+            candidates.append((rel_x, obj))
     return min(candidates, key=lambda item: item[0])[1] if candidates else None
 
 # Main role: find the closest vehicle ahead of ego that is driving in the opposite direction.
@@ -410,19 +366,26 @@ def find_oncoming_vehicle(
     opposite_lane_y_tolerance : lateral search band covering the oncoming lane [m]
     max_lookahead_m           : ignore objects further than this distance ahead [m]
 
-    Heading check: |angle_difference(obj_yaw, ego_yaw)| > pi/2 means the object
+    Heading check: |relative_yaw| > pi/2 means the object
     is travelling more than 90° away from ego — i.e. oncoming.
     """
     candidates = []
     for obj in environment.objects:
-        rel = _object_relative_to_ego(obj, ego_state)
-        heading_delta = abs(_angle_difference(obj.state.yaw, ego_state.state.yaw))
+        rel_x, rel_y, rel_yaw = global_to_ego_axis(
+            obj.state.pos.x,
+            obj.state.pos.y,
+            ego_state.state.pos.x,
+            ego_state.state.pos.y,
+            ego_state.state.yaw,
+            poi_yaw=obj.state.yaw,
+        )
+        heading_delta = abs(rel_yaw) if rel_yaw is not None else 0.0
         if (
-            0.0 < rel.x <= max_lookahead_m
-            and abs(rel.y) <= opposite_lane_y_tolerance
+            0.0 < rel_x <= max_lookahead_m
+            and abs(rel_y) <= opposite_lane_y_tolerance
             and heading_delta > math.pi / 2
         ):
-            candidates.append((rel.x, obj))
+            candidates.append((rel_x, obj))
     return min(candidates, key=lambda item: item[0])[1] if candidates else None
 
 # Overtake specific prediction
@@ -491,9 +454,11 @@ def is_overtake_gap_safe(
         for obj in objects_at_time(predicted_environment, ts):
             if obj.state.id == lead_vehicle_id:
                 continue
-            dist = point_distance(
-                ego_state.state.pos.x, ego_state.state.pos.y,
-                obj.state.pos.x, obj.state.pos.y,
+            dist = get_magnitude(
+                Vector2D(
+                    x=obj.state.pos.x - ego_state.state.pos.x,
+                    y=obj.state.pos.y - ego_state.state.pos.y,
+                )
             )
             if dist < safety_distance:
                 return False
