@@ -168,7 +168,7 @@ def calculate_heuristic_cost(
     state: EgoStateStamped, 
     request: PlanningRequest, 
     veh_cfg: DictConfig, 
-    max_a_lat: float
+    mp_cfg: DictConfig
 ) -> float:
     """
     Calculates the heuristic cost from a given state to the goal region using a Dubins path.
@@ -177,7 +177,7 @@ def calculate_heuristic_cost(
         state (EgoStateStamped): The starting state for the heuristic calculation.
         request (PlanningRequest): The planning request containing the goal region.
         veh_cfg (DictConfig): The Hydra configuration object containing vehicle dimensions and limits.
-        max_a_lat (float): The maximum allowable lateral acceleration [m/s^2].
+        veh_cfg (DictConfig): The Hydra configuration object containing the motion primitives configuration.
 
     Returns:
         float: The estimated distance (Dubins path length) to the goal region.
@@ -187,7 +187,7 @@ def calculate_heuristic_cost(
     current_speed = math.hypot(state.state.velocity.x, state.state.velocity.y)
 
     # 2. Get max steer angle for this specific speed
-    max_steer = _get_max_steering_angle(current_speed, max_a_lat, veh_cfg)
+    max_steer = _get_max_steering_angle(current_speed, veh_cfg, mp_cfg)
     
     # 3. Calculate curvature using the WHEELBASE, not the total length
     curvature = math.tan(max_steer) / veh_cfg.wheel_base
