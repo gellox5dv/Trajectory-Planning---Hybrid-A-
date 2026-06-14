@@ -279,8 +279,4 @@ def get_ego_lane_info(
             opposite_lane = (yaw_offset > pi / 2 or yaw_offset < -pi / 2)
             return lane.id, distance_to_lane_center, yaw_offset, occlusion_sum, opposite_lane, lane.speed_limit
     
-<<<<<<< HEAD
-    return -1, float('inf'), 0.0, occlusion_sum, False
-=======
     return -1, float('inf'), 0.0, occlusion_sum, False, 0.0
->>>>>>> origin/main
