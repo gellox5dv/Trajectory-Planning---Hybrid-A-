@@ -145,9 +145,13 @@ def predict_motion_constant_acceleration(
     objects: List[DynamicObjectStamped],  # current dynamic objects from Environment.objects
     prediction_horizon: int,              # total prediction time [ms]
     dt: int,                              # prediction step size [ms]
+    accelerations: Optional[Dict[int, Vector2D | float]] = None,  # object_id -> acceleration override
 ) -> List[DynamicObjectStamped]:
     """
     Predict object motion over the horizon using constant acceleration.
+
+    If accelerations is provided, each object uses the acceleration from
+    accelerations[object_id] instead of obj.state.acceleration.
 
     Yaw is held constant (straight-line motion). For curved trajectories,
     use predict_motion_constant_turn_rate instead.
@@ -162,10 +166,16 @@ def predict_motion_constant_acceleration(
             if isinstance(cs.velocity, Vector2D)
             else get_vector(float(cs.velocity), cs.yaw)
         )
+        acceleration_value = cs.acceleration
+        if accelerations is not None:
+            if cs.id not in accelerations:
+                raise ValueError(f"Missing acceleration for object id {cs.id}")
+            acceleration_value = accelerations[cs.id]
+
         acceleration = (
-            cs.acceleration
-            if isinstance(cs.acceleration, Vector2D)
-            else get_vector(float(cs.acceleration), cs.yaw)
+            acceleration_value
+            if isinstance(acceleration_value, Vector2D)
+            else get_vector(float(acceleration_value), cs.yaw)
         )
 
         for t in range(0, prediction_horizon + dt, dt):
@@ -280,6 +290,7 @@ def predict_environment(
     prediction_horizon: int,
     dt: int,
     model: PredictionModel = "constant_acceleration",
+    accelerations: Optional[Dict[int, Vector2D | float]] = None,
     yaw_rates: Optional[Dict[int, float]] = None,
 ) -> PredictedEnvironment:
     """
@@ -287,6 +298,10 @@ def predict_environment(
 
     model = "constant_acceleration" : straight-line, handles braking correctly.
     model = "constant_turn_rate"    : CTRV, handles curved trajectories correctly.
+
+    accelerations is only used when model = "constant_acceleration".
+    Pass a dict mapping object_id -> acceleration, either Vector2D or scalar
+    longitudinal acceleration [m/s²].
 
     yaw_rates is only used when model = "constant_turn_rate".
     Pass a dict mapping object_id -> measured yaw_rate [rad/s].
@@ -299,7 +314,10 @@ def predict_environment(
 
     if model == "constant_acceleration":
         raw = predict_motion_constant_acceleration(
-            environment.objects, prediction_horizon, dt
+            environment.objects,
+            prediction_horizon,
+            dt,
+            accelerations=accelerations,
         )
     elif model == "constant_turn_rate":
         raw = predict_constant_turn(
@@ -397,6 +415,7 @@ def predict_overtake_environment(
     prediction_horizon: int,
     dt: int,
     model: PredictionModel = "constant_acceleration",
+    accelerations: Optional[Dict[int, Vector2D | float]] = None,
     yaw_rates: Optional[Dict[int, float]] = None,
 ) -> PredictedEnvironment:
     """
@@ -416,6 +435,7 @@ def predict_overtake_environment(
         prediction_horizon=prediction_horizon,
         dt=dt,
         model=model,
+        accelerations=accelerations,
         yaw_rates=yaw_rates,
     )
 
