@@ -4,47 +4,79 @@ from typing import Optional
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from matplotlib import transforms
+from models.models import *
 
-# module-level state: reuse the same figure and axes across repeated calls
+# Extended module-level state
 _fig = None
 _ax = None
 _initialized = False
 
+# New variables for camera control
+_follow_ego = True
+_saved_xlim = None
+_saved_ylim = None
 
-def visualize_scene(env, ego, vehicle_params, trajectory=None) -> None:
+for key in ['f', 'F']:
+    if key in plt.rcParams['keymap.fullscreen']:
+        plt.rcParams['keymap.fullscreen'].remove(key)
+
+
+def visualize_scene(env, ego, vehicle_params, trajectory=None, goal_region=None) -> None:
     """
     Main entry point. Call once per simulation step for live visualization.
-    Clears and redraws the full scene on every call.
     """
-    global _fig, _ax, _initialized
+    global _fig, _ax, _initialized, _follow_ego, _saved_xlim, _saved_ylim
 
-    # create the figure only once; subsequent calls reuse it
     if not _initialized:
-        plt.ion()  # non-blocking interactive mode
+        plt.ion()
         _fig, _ax = plt.subplots(figsize=(10, 8))
+        
+        def on_key(event):
+            global _follow_ego
+            if event.key == 'f':
+                _follow_ego = not _follow_ego
+                mode = "FOLLOW" if _follow_ego else "FREE CAMERA"
+                print(f"🎥 Camera Mode: {mode}")
+
+        _fig.canvas.mpl_connect('key_press_event', on_key)
+        
         _initialized = True
 
-    _ax.clear()  # wipe the previous frame before redrawing
+    if not _follow_ego:
+        _saved_xlim = _ax.get_xlim()
+        _saved_ylim = _ax.get_ylim()
 
-    # draw scene layers in order: road → objects → ego → trajectory
+    _ax.clear()  # wipe the previous frame before redrawing
+    
+    _ax.set_facecolor("#444444")
+
+    # draw scene layers
     _draw_lanes(_ax, env)
+    _draw_goal_region(_ax, goal_region)
     _draw_objects(_ax, env)
     _draw_ego(_ax, ego, vehicle_params)
     _draw_trajectory(_ax, trajectory)
 
     # axis formatting
-    _ax.set_title("Trajectory Visualization")
+    # Show the current mode in the title so the user knows what is happening
+    title_suffix = "(Follow Mode)" if _follow_ego else "(Free Camera - Press 'F' to follow)"
+    _ax.set_title(f"Trajectory Visualization {title_suffix}")
     _ax.set_xlabel("x [m]")
     _ax.set_ylabel("y [m]")
-    _ax.set_aspect("equal", adjustable="box")  # equal scale on both axes
-    _ax.grid(True)
-    _ax.legend(loc="upper left", fontsize=8)
+    _ax.set_aspect("equal", adjustable="box")
+    _ax.grid(True, color="#555555", linestyle=":")
+    _ax.legend(loc="upper left", fontsize=8, facecolor="white", edgecolor="none")
 
-    # center the view around the ego vehicle
-    _set_view(_ax, ego)
+    # Conditional camera tracking ---
+    if _follow_ego:
+        _set_view(_ax, ego)
+    elif _saved_xlim is not None and _saved_ylim is not None:
+        # In Free mode, restore the saved viewport (or your manual zoom)
+        _ax.set_xlim(_saved_xlim)
+        _ax.set_ylim(_saved_ylim)
 
     plt.draw()
-    plt.pause(0.001)  # tiny pause so the GUI can refresh without blocking
+    plt.pause(0.001)
 
 
 # ─── State Unwrappers ────────────────────────────────────────────────────────
@@ -69,7 +101,6 @@ def _get_traj_state(state_entry):
 def _draw_lanes(ax, env) -> None:
     """
     Draw lane centerlines (dashed) and boundaries (solid white).
-    Lane.centerline is List[Tuple[Vector2D, float]]: each entry is (point, tangent_angle).
     Lane boundaries are offset ± width/2 perpendicular to the tangent.
     """
     if env is None or not hasattr(env, "lanes") or env.lanes is None:
@@ -86,8 +117,8 @@ def _draw_lanes(ax, env) -> None:
         xs = [p.x for p in pts]
         ys = [p.y for p in pts]
 
-        # dashed centerline
-        ax.plot(xs, ys, linestyle="--", linewidth=1.0, color="gray")
+        # dashed centerline (yellow/lightgray)
+        #ax.plot(xs, ys, linestyle="--", linewidth=1.5, color="#CCCCCC", label="Centerline" if lane.id == env.lanes[0].id else "")
 
         # lane boundaries: offset perpendicular to tangent by ± half width
         half_w = lane.width / 2
@@ -96,8 +127,29 @@ def _draw_lanes(ax, env) -> None:
         right_xs = [p.x + half_w * math.sin(t) for p, t in zip(pts, tangents)]
         right_ys = [p.y - half_w * math.cos(t) for p, t in zip(pts, tangents)]
 
-        ax.plot(left_xs,  left_ys,  linewidth=1.0, color="white")
-        ax.plot(right_xs, right_ys, linewidth=1.0, color="white")
+        # Draw solid white road boundaries
+        ax.plot(left_xs,  left_ys,  linewidth=2.0, color="white", label="Lane Boundary" if lane.id == env.lanes[0].id else "")
+        ax.plot(right_xs, right_ys, linewidth=2.0, color="white")
+
+
+def _draw_goal_region(ax, goal_region) -> None:
+    """Draw the target goal region as a green transparent box."""
+    if goal_region is None:
+        return
+
+    _draw_box(
+        ax=ax,
+        x=goal_region.center.x,
+        y=goal_region.center.y,
+        yaw=goal_region.yaw,
+        length=goal_region.length,
+        width=goal_region.width,
+        color="lime",
+        label="Goal Region",
+        linestyle="--",
+        alpha=0.6,
+        fill=True
+    )
 
 
 def _draw_objects(ax, env) -> None:
@@ -141,7 +193,7 @@ def _draw_ego(ax, ego, vehicle_params) -> None:
         yaw=ego_state.yaw,
         length=vehicle_params.length,
         width=vehicle_params.width,
-        color="blue",
+        color="dodgerblue",
         label="Ego",
     )
 
@@ -157,34 +209,45 @@ def _draw_ego(ax, ego, vehicle_params) -> None:
         arrow_len * math.sin(ego_state.yaw),
         head_width=max(vehicle_params.width * 0.2, 0.15),
         length_includes_head=True,
-        color="blue",
+        color="cyan",
     )
 
 
 def _draw_trajectory(ax, trajectory) -> None:
     """
-    Draw the planned trajectory as a green line with point markers.
+    Draw the planned trajectory as a red line with dark red cross markers.
     Safe to call with trajectory=None — draws nothing.
     """
-    if trajectory is None or not hasattr(trajectory, "states") or not trajectory.states:
+    # Robust guard clause: check for None, lack of 'states' attribute, or empty states
+    if trajectory is None:
+        return
+    
+    if not hasattr(trajectory, "states") or not trajectory.states:
         return
 
     # unwrap each EgoStateStamped to EgoState
     states = [_get_traj_state(s) for s in trajectory.states]
+    
+    # Extract coordinates
     xs = [s.pos.x for s in states]
     ys = [s.pos.y for s in states]
 
     # guard: need at least 2 points for a line
     if len(xs) < 2:
-        ax.scatter(xs, ys, s=30, color="green", zorder=5)
+        if len(xs) == 1:
+            ax.scatter(xs, ys, s=40, color="darkred", marker="x", zorder=5)
         return
 
-    ax.plot(xs, ys, linewidth=2.0, color="green", label="Planned trajectory")
-    ax.scatter(xs, ys, s=10, color="green", zorder=5)  # small dots at each waypoint
+    # Draw the continuous trajectory line
+    ax.plot(xs, ys, linewidth=2.0, color="red", label="Trajectory")
+    
+    # Mark waypoints with dark red crosses
+    ax.scatter(xs, ys, s=40, color="darkred", marker="x", linewidths=1.5, zorder=5)
 
 
 def _draw_box(ax, x: float, y: float, yaw: float, length: float, width: float,
-              color: str = "red", label: Optional[str] = None) -> None:
+              color: str = "red", label: Optional[str] = None, 
+              linestyle: str = "-", alpha: float = 1.0, fill: bool = False) -> None:
     """
     Draw a yaw-rotated bounding box centered at (x, y).
     Uses an Affine2D transform to rotate the Rectangle around its center.
@@ -193,14 +256,20 @@ def _draw_box(ax, x: float, y: float, yaw: float, length: float, width: float,
     if length <= 0 or width <= 0:
         return
 
+    # Set facecolor for filled boxes, otherwise transparent
+    facecolor = color if fill else "none"
+
     # Rectangle anchor is bottom-left corner before rotation
     rect = Rectangle(
         (x - length / 2, y - width / 2),
         length,
         width,
-        fill=False,       # transparent fill
+        fill=fill,
+        facecolor=facecolor,
         edgecolor=color,
         linewidth=2,
+        linestyle=linestyle,
+        alpha=alpha,
     )
 
     # rotate the rectangle around (x, y) by yaw angle
@@ -210,19 +279,19 @@ def _draw_box(ax, x: float, y: float, yaw: float, length: float, width: float,
 
     if label:
         ax.text(
-            x, y + width / 2 + 0.3,   # offset above the box
+            x, y + width / 2 + 0.5,   # offset slightly higher above the box
             label,
             fontsize=8,
-            color=color,
+            color="black",            # better contrast on gray background
             ha="center",
             va="bottom",
             bbox=dict(
                 boxstyle="round,pad=0.2",
                 facecolor="white",
-                edgecolor="none",
-                alpha=0.7,             # semi-transparent background
+                edgecolor=color,
+                alpha=0.8,            
             )
-    )
+        )
 
 
 # ─── Camera View ─────────────────────────────────────────────────────────────
