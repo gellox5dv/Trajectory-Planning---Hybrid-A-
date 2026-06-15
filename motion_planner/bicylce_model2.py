@@ -16,7 +16,7 @@ _MIN_SPEED_FOR_SLIP = 0.1
 
 # Role: fast stateless model for planner trajectory rollout.
 def kinematic_bicycle_model(
-    stamped_state: EgoStateStamped,
+    state: EgoStateStamped,
     control: EgoInput,
     dt_ms: int,
     veh_cfg: DictConfig,
@@ -24,7 +24,7 @@ def kinematic_bicycle_model(
 ) -> EgoStateStamped:
     """Fast stateless bicycle model intended for planner rollout."""
 
-    current_state = stamped_state.state
+    current_state = state.state
     dt_sec = float(dt_ms) / 1000.0
 
     max_acceleration = float(veh_cfg.max_acceleration)
@@ -85,7 +85,7 @@ def kinematic_bicycle_model(
     next_acceleration = Vector2D(x=acceleration_x, y=acceleration_y)
 
     return EgoStateStamped(
-        timestamp=stamped_state.timestamp + dt_ms,
+        timestamp=state.timestamp + dt_ms,
         state=EgoState(
             pos=Vector2D(x=next_x, y=next_y),
             velocity=next_velocity,
@@ -114,7 +114,7 @@ class DynamicBicycleModel:
             0.0,
             ego_state.yaw,
         )
-
+        #Forward velocity is forced nonnegative, so this model does not drive backward.
         self.dynamic_state = DynamicState(
             pos=Vector2D(x=ego_state.pos.x, y=ego_state.pos.y),
             yaw=ego_state.yaw,
@@ -130,6 +130,7 @@ class DynamicBicycleModel:
         )
 
     # Role: replace the internal simulator state with a new EgoState.
+    #new state without creating a new model.
     def reset(self, ego_state: EgoState, yaw_rate: float = 0.0) -> None:
         vx_body, vy_body, _ = global_to_ego_axis(
             ego_state.velocity.x,
@@ -155,7 +156,7 @@ class DynamicBicycleModel:
 
     # Role: convert target steering input into steer rate, then use nonlinear dynamics.
     def step_control(self, control: EgoInput, dt_ms: int) -> EgoState:
-        """Step using an acceleration plus target steering angle command."""
+        """This accepts target steering angle and acceleration."""
 
         dt_sec = float(dt_ms) / 1000.0
         target_steering_angle = max(
@@ -189,7 +190,7 @@ class DynamicBicycleModel:
             dt_ms=dt_ms,
         )
 
-    # Role: propagate simulator state with the linear dynamic bicycle formula.
+    # Role: propagate simulator state with the bicycle formula.
     def step_linear(
         self,
         acceleration: float,
@@ -302,7 +303,7 @@ class DynamicBicycleModel:
 
     # Role: propagate simulator state with the nonlinear tire-force bicycle model.
     def step(self, acceleration: float, steer_rate: float, dt_ms: int) -> EgoState:
-        """Advance the internal vehicle state by ``dt_ms`` milliseconds."""
+        """Advance the internal vehicle state by dt_ms."""
 
         dt_sec = float(dt_ms) / 1000.0
         if dt_sec <= 0.0:
@@ -347,6 +348,7 @@ class DynamicBicycleModel:
         front_lateral_force = float(self.veh_cfg.Cf) * alpha_front
         rear_lateral_force = float(self.veh_cfg.Cr) * alpha_rear
 
+        #Normal force means vertical load from gravity. Heavier load allows more friction force.
         wheel_base = float(self.veh_cfg.lf) + float(self.veh_cfg.lr)
         front_normal_force = (
             float(self.veh_cfg.m) * 9.81 * float(self.veh_cfg.lr) / wheel_base
