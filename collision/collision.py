@@ -7,7 +7,6 @@ from models.models import (
     Lane, Environment, PredictedEnvironment, Vector2D
 )
 from shapely.geometry import LineString, Polygon
-from omegaconf import DictConfig
 
 MovingObject = Union[EgoStateStamped, DynamicObjectStamped]
 
@@ -18,15 +17,17 @@ def get_x_y_yaw_from_state(state: MovingObject) -> Tuple[float, float, float]:
 def _ego_object_distance(
     ego_state: EgoStateStamped,
     obj: DynamicObjectStamped,
-    ego_params: DictConfig
+    ego_length: float,
+    ego_width: float,
+    ego_rear_to_wheel: float,
 ) -> float:
     """Calculate the distance from the ego vehicle to a dynamic object."""
     ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(ego_state)
-    ego_x_center = ego_x + (ego_params.length / 2 - ego_params.rear_to_wheel) * cos(ego_yaw)
-    ego_y_center = ego_y + (ego_params.length / 2 - ego_params.rear_to_wheel) * sin(ego_yaw)
+    ego_x_center = ego_x + (ego_length / 2 - ego_rear_to_wheel) * cos(ego_yaw)
+    ego_y_center = ego_y + (ego_length / 2 - ego_rear_to_wheel) * sin(ego_yaw)
     obj_x_center, obj_y_center, obj_yaw = get_x_y_yaw_from_state(obj)
 
-    ego_corners = get_bbox_corners(ego_x_center, ego_y_center, ego_yaw, ego_params.length, ego_params.width)
+    ego_corners = get_bbox_corners(ego_x_center, ego_y_center, ego_yaw, ego_length, ego_width)
     obj_corners = get_bbox_corners(obj_x_center, obj_y_center, obj_yaw, obj.state.length, obj.state.width)
 
     ego_polygon = Polygon([(corner.x, corner.y) for corner in ego_corners])
@@ -159,7 +160,9 @@ def get_distance_to_objects(
     current_ego: EgoStateStamped,
     previous_ego: EgoStateStamped,
     predicted_env: PredictedEnvironment,
-    vehicle_params: DictConfig,
+    ego_length: float,
+    ego_width: float,
+    ego_rear_to_wheel, float,
     resolution_ms: int
 ) -> Tuple[Optional[Sequence[Tuple[int, float]]], bool]:
     """Checks the interval between two planning steps for collisions and calculates aggregated distances to all objects."""
@@ -187,7 +190,7 @@ def get_distance_to_objects(
                 break
             
             obj_state = obj_states[0][1]
-            distance = _ego_object_distance(ego_state, obj_state, vehicle_params)
+            distance = _ego_object_distance(ego_state, obj_state, ego_length, ego_width, ego_rear_to_wheel)
             min_distance = min(min_distance, distance)
 
             if distance < 0.1:  # collision threshold
@@ -202,15 +205,17 @@ def get_distance_to_objects(
 def _get_lane_occlusion(
     ego_state: EgoStateStamped,
     lane: Lane,
-    vehicle_params: DictConfig
+    ego_rear_to_wheel: float,
+    ego_length: float,
+    ego_width: float,
 ) -> float:
     """Calculate the area of the ego vehicle on the lane."""
     ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(ego_state)
-    ego_center_offset = vehicle_params.length / 2 - vehicle_params.rear_to_wheel
+    ego_center_offset = ego_length / 2 - ego_rear_to_wheel
     ego_x += ego_center_offset * cos(ego_yaw)
     ego_y += ego_center_offset * sin(ego_yaw)
 
-    ego_corners = get_bbox_corners(ego_x, ego_y, ego_yaw, vehicle_params.length, vehicle_params.width)
+    ego_corners = get_bbox_corners(ego_x, ego_y, ego_yaw, ego_length, ego_width)
     ego_polygon = Polygon([(corner.x, corner.y) for corner in ego_corners])
 
     lane_centerline = [(point.x, point.y) for point, _ in lane.centerline]
@@ -257,7 +262,9 @@ def _get_lane_offset(
 
 def get_ego_lane_info(
     ego_state: EgoState,
-    vehicle_cfg: DictConfig,
+    ego_length: float,
+    ego_width: float,
+    ego_rear_to_wheel: float,
     lanes: List[Lane]
 ) -> Tuple[int, float, float, float, bool, float]:
     """
@@ -272,7 +279,7 @@ def get_ego_lane_info(
     
     occlusion_sum = 0.0
     for lane in lanes:
-        lane_occlusion = _get_lane_occlusion(EgoStateStamped(timestamp=0, state=ego_state), lane, vehicle_cfg)
+        lane_occlusion = _get_lane_occlusion(EgoStateStamped(timestamp=0, state=ego_state), lane, ego_rear_to_wheel, ego_length, ego_width)
         occlusion_sum += lane_occlusion
         if lane_occlusion > 0.5:
             distance_to_lane_center, yaw_offset = _get_lane_offset(EgoStateStamped(timestamp=0, state=ego_state), lane)
