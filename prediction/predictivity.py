@@ -121,6 +121,7 @@ def _predict_ctrv_step(
     Note: speed is held constant (no longitudinal acceleration). For a turning + braking vehicle, combine this with
                                                                  a longitudinal speed profile (future extension).
     """
+    #circle motion equations, handles the turning
     if abs(yaw_rate) >= _YAW_RATE_MIN:
         new_yaw = yaw + yaw_rate * time_s
         radius = speed / yaw_rate  # signed turning radius [m]
@@ -177,7 +178,7 @@ def predict_motion_constant_acceleration(
             if isinstance(acceleration_value, Vector2D)
             else get_vector(float(acceleration_value), cs.yaw)
         )
-
+        # create a predicted object at every timestamp:
         for t in range(0, prediction_horizon + dt, dt):
             time_s = t / 1000.0
             new_pos, new_velocity = _predict_constant_acceleration_step(
@@ -348,8 +349,8 @@ def objects_at_time(
 def find_lead_vehicle(
     environment: Environment,
     ego_state: EgoStateStamped,
-    lane_y_tolerance: float = 2.0,
-    max_lookahead_m: float = 150.0,
+    lane_y_tolerance: float = 2.0, #how far sideways an object can be and still count as same lane.
+    max_lookahead_m: float = 150.0, #ignore objects too far away.
 ) -> Optional[DynamicObjectStamped]:
     """
     Find the closest object ahead of ego in the same lane.
