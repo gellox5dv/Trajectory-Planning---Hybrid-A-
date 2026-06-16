@@ -113,6 +113,14 @@ OVERTAKE_PHASES = [
     (1.0,   0.0),   # Complete:  straighten up
 ]
 
+STEERING_TRANSITION_TIME = 1.0
+
+
+def _smoothstep(value: float) -> float:
+    value = max(0.0, min(1.0, value))
+    return value * value * (3.0 - 2.0 * value)
+
+
 #  ─ VISUALIZER ─
 
 class Visualizer:
@@ -386,26 +394,40 @@ class Vehicle:
         # Overtake phase tracker
         self._phase_index    = 0       # which phase we are in
         self._phase_elapsed  = 0.0     # how long we have been in this phase
+        self._phase_start_steer_deg = OVERTAKE_PHASES[0][1]
 
     def _get_target_steer(self, dt_sec: float) -> float:
-        """""
+        """
         Reads OVERTAKE_PHASES and returns the target steering angle
         for the current moment in time.
-        """""
+        """
         
         # Advance phase timer
         self._phase_elapsed += dt_sec
 
         # If current phase has finished, move to next one
-        if self._phase_index < len(OVERTAKE_PHASES) - 1:
+        while self._phase_index < len(OVERTAKE_PHASES) - 1:
             phase_duration = OVERTAKE_PHASES[self._phase_index][0]
-            if self._phase_elapsed >= phase_duration:
-                self._phase_index   += 1
-                self._phase_elapsed  = 0.0
+            if self._phase_elapsed < phase_duration:
+                break
+            self._phase_elapsed -= phase_duration
+            self._phase_start_steer_deg = OVERTAKE_PHASES[self._phase_index][1]
+            self._phase_index += 1
 
-        # Return target steer angle for the current phase (convert to radians)
         target_deg = OVERTAKE_PHASES[self._phase_index][1]
-        return math.radians(target_deg)
+        phase_duration = OVERTAKE_PHASES[self._phase_index][0]
+        transition_time = min(STEERING_TRANSITION_TIME, phase_duration)
+
+        if transition_time > 0.0:
+            ratio = _smoothstep(self._phase_elapsed / transition_time)
+        else:
+            ratio = 1.0
+
+        smooth_target_deg = (
+            self._phase_start_steer_deg
+            + (target_deg - self._phase_start_steer_deg) * ratio
+        )
+        return math.radians(smooth_target_deg)
 
     def Motion_control(self, dt_ms: int = 50):
         """""
