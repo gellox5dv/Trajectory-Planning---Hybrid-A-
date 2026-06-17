@@ -3,6 +3,8 @@ from typing import List, Optional, Tuple
 from configparser import ConfigParser
 from models.models import Vector2D, EgoStateStamped, Lane, GoalRegion
 import copy
+from types import SimpleNamespace
+from omegaconf import OmegaConf
 
 
 def global_to_ego_axis(poi_x: float, poi_y: float, ego_x: float, ego_y: float, ego_yaw: float, poi_yaw: Optional[float] = None) -> Tuple[float, float, Optional[float]]:
@@ -64,6 +66,21 @@ def check_line_intersection(p1: Vector2D, p2: Vector2D, p3: Vector2D, p4: Vector
 
 def get_magnitude(vector: Vector2D) -> float:
     return hypot(vector.x, vector.y)
+
+def get_signed_magnitude(vector: Vector2D, yaw: float) -> float:
+    """
+    Calculates the longitudinal length of a 2D vector relative to the vehicle's heading.
+    
+    Args:
+        vector (Vector2D): The vector to project (e.g., velocity or acceleration).
+        yaw (float): The current heading of the vehicle in radians.
+        
+    Returns:
+        float: 
+            Positive value: Vector points in the direction of travel (moving forward / accelerating).
+            Negative value: Vector points opposite to the direction of travel (reversing / braking).
+    """
+    return vector.x * cos(yaw) + vector.y * sin(yaw)
 
 
 def get_vector(magnitude: float, direction: float) -> Vector2D:
@@ -145,32 +162,24 @@ def get_nearest_lane_center(ego_state: EgoStateStamped, lanes: List[Lane]) -> Tu
 
 
 def get_goal_region(
-        curr_ego_state: EgoStateStamped,
-        lanes: List[Lane],
-        horizon: int,
-        length: float,
-        width: float,
-    ) -> GoalRegion:
+    curr_ego_state: EgoStateStamped,
+    lanes: List[Lane],
+    horizon: int,
+    length: float,
+    width: float,
+    target_speed: float = 5.0,
+) -> GoalRegion:
     """
-    Get the goal region which is horizon seconds ahead in the same lane as the ego vehicle.
-
-    Args:
-        curr_ego_state (EgoStateStamped): The current state of the ego vehicle.
-        lanes (List[Lane]): A list of available lanes.
-        horizon (float): The time horizon to look ahead [ms].
-        length (float): The length of the goal region [m].
-        width (float): The width of the goal region [m].
-
-    Returns:
-        GoalRegion: The computed goal region.
+    Get the goal region which is horizon seconds ahead in the same lane.
     """
-
     nearest_lane_yaw, nearest_lane_center = get_nearest_lane_center(curr_ego_state, lanes)
 
-    curr_vel = curr_ego_state.state.velocity
-    curr_vel_magnitude = hypot(curr_vel.x, curr_vel.y)
+    vel = curr_ego_state.state.velocity
+    vel_magnitude = hypot(vel.x, vel.y)
 
-    distance_ahead = curr_vel_magnitude * horizon / 1000.0
+    # Ensure a minimum lookahead distance even when the vehicle is stopped
+    planning_speed = max(vel_magnitude, target_speed)
+    distance_ahead = planning_speed * (horizon / 1000.0)
 
     goal_center_x = nearest_lane_center.x + distance_ahead * cos(nearest_lane_yaw)
     goal_center_y = nearest_lane_center.y + distance_ahead * sin(nearest_lane_yaw)
@@ -181,3 +190,21 @@ def get_goal_region(
         width=width,
         yaw=nearest_lane_yaw
     )
+
+
+def convert_cfg_to_native(cfg_obj):
+    """
+    Konvertiert OmegaConf rekursiv in native SimpleNamespace-Objekte.
+    Dies ermöglicht C-Level Zugriffsgeschwindigkeiten auf Attribute.
+    """
+    if hasattr(cfg_obj, "_is_dict"):
+        d = OmegaConf.to_container(cfg_obj, resolve=True)
+    else:
+        d = cfg_obj
+
+    if isinstance(d, dict):
+        return SimpleNamespace(**{k: convert_cfg_to_native(v) for k, v in d.items()})
+    elif isinstance(d, list):
+        return [convert_cfg_to_native(i) for i in d]
+    
+    return d

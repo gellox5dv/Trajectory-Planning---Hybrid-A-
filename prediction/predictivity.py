@@ -14,7 +14,7 @@ from models.models import (
     PredictedEnvironment,
     Vector2D,
 )
-from utils.helper import get_magnitude, get_vector, global_to_ego_axis
+from utils.helper import get_magnitude, get_vector, global_to_ego_axis, get_signed_magnitude
 
 PredictionModel = Literal["constant_acceleration", "constant_turn_rate"]
 
@@ -240,7 +240,7 @@ def predict_constant_turn(
     for obj in objects:
         cs = obj.state
         speed = (
-            get_magnitude(cs.velocity)
+            get_signed_magnitude(cs.velocity, cs.yaw)
             if isinstance(cs.velocity, Vector2D)
             else abs(float(cs.velocity))
         )
@@ -474,11 +474,12 @@ def is_overtake_gap_safe(
         for obj in objects_at_time(predicted_environment, ts):
             if obj.state.id == lead_vehicle_id:
                 continue
-            dist = get_magnitude(
+            dist = get_signed_magnitude(
                 Vector2D(
                     x=obj.state.pos.x - ego_state.state.pos.x,
                     y=obj.state.pos.y - ego_state.state.pos.y,
-                )
+                ),
+                obj.state.yaw
             )
             if dist < safety_distance:
                 return False
