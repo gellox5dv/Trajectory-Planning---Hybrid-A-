@@ -40,6 +40,9 @@ class MPCController:
         self.dt = controller_cfg.dt / 1000.0
         self.N = int(math.ceil(controller_cfg.horizon / controller_cfg.dt))
 
+        self.max_acc = vehicle_params.max_acceleration
+        self.max_dec = -abs(vehicle_params.max_deceleration)
+
         self.max_delta = float(vehicle_params.max_steer)
         self.max_delta_rate = float(vehicle_params.max_steer_rate)
 
