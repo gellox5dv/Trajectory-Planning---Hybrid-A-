@@ -5,4 +5,4 @@ defaults:
   - controller: default_controller_config
   - vehicle: renault_twizy
   - noise: no_noise
-  - scenario: simple_scenario
+  - scenario: no_objects_scenario
