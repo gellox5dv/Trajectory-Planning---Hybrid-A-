@@ -5,7 +5,7 @@ from shapely.geometry import Polygon
 from collision.collision import get_distance_to_objects
 from models.models import *
 from omegaconf import DictConfig
-from utils.helper import get_magnitude
+from utils.helper import get_magnitude, get_signed_magnitude
 
 
 #--- Comfort Costs ---------------------------------------------------------------------
@@ -112,7 +112,7 @@ def cost_target_speed_delta(
         float: The calculated penalty cost for speed deviation.
     """
     
-    current_speed = get_magnitude(curr_state.state.velocity)
+    current_speed = get_signed_magnitude(curr_state.state.velocity, curr_state.state.yaw)
     
     delta_v = current_speed - target_speed
     
@@ -156,7 +156,14 @@ def cost_objects_force_field(
     
     # 1. Get exact distances and check for hard collisions using the resolution from config
     distances, is_collision = get_distance_to_objects(
-        current_ego, previous_ego, predicted_env, veh_cfg, ff_cfg.resolution_ms
+        current_ego = current_ego,
+        previous_ego = previous_ego,
+        predicted_env = predicted_env, 
+        ego_length = veh_cfg.length,
+        ego_width = veh_cfg.width,
+        ego_rear_to_wheel = veh_cfg.rear_to_wheel,
+        resolution_ms = cost_cfg.cost_objects_force_field.resolution_ms,
+        calc_exact_distance = cost_cfg.cost_objects_force_field.d_ffl
     )
     
     if is_collision:
@@ -169,8 +176,8 @@ def cost_objects_force_field(
     ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(current_ego)
     
     # Extract Ego kinematics using the helper function
-    ego_speed = get_magnitude(current_ego.state.velocity)
-    ego_accel = get_magnitude(current_ego.state.acceleration)
+    ego_speed = get_signed_magnitude(current_ego.state.velocity, current_ego.state.yaw)
+    ego_accel = get_signed_magnitude(current_ego.state.acceleration, current_ego.state.yaw)
     
     # Calculate dynamic expansion for the ego vehicle
     ego_front_exp = ego_speed * ff_cfg.speed_expansion_factor_front + ego_accel * ff_cfg.accel_expansion_factor_front
@@ -214,8 +221,8 @@ def cost_objects_force_field(
         obj_yaw = current_obj_state.state.yaw
         
         # Extract object kinematics seamlessly using the Vector2D helper function
-        obj_speed = get_magnitude(current_obj_state.state.velocity)
-        obj_accel = get_magnitude(current_obj_state.state.acceleration)
+        obj_speed = get_signed_magnitude(current_obj_state.state.velocity, current_obj_state.state.yaw)
+        obj_accel = get_signed_magnitude(current_obj_state.state.acceleration, current_obj_state.state.yaw)
         
         # Calculate dynamic expansion for the object
         obj_front_exp = obj_speed * ff_cfg.speed_expansion_factor_front + obj_accel * ff_cfg.accel_expansion_factor_front
@@ -237,15 +244,18 @@ def cost_objects_force_field(
         obj_ffh_polygon = Polygon([(c.x, c.y) for c in obj_corners])
 
         # 4. Cost Mapping (Intersection vs. Proximity)
+        cost_low = 0.0
+        if base_dist < ff_cfg.d_ffl:
+            # FFL Low: Quadratic virtual spring for smooth anticipation
+            cost_low = ff_cfg.weight_ff_low * ((ff_cfg.d_ffl - base_dist) / ff_cfg.d_ffl) ** 2
+            
+        cost_high = 0.0
         if ego_ffh_polygon.intersects(obj_ffh_polygon):
             # FFH High: Exponential cost to handle narrow gaps securely
-            cost = ff_cfg.weight_ff_high * math.exp(-ff_cfg.decay_factor_high * base_dist)
-        else:
-            # FFL Low: Quadratic virtual spring for smooth anticipation
-            if base_dist < ff_cfg.d_ffl:
-                cost = ff_cfg.weight_ff_low * ((ff_cfg.d_ffl - base_dist) / ff_cfg.d_ffl) ** 2
-            else:
-                cost = 0.0
+            cost_high = ff_cfg.weight_ff_high * math.exp(-ff_cfg.decay_factor_high * base_dist)
+
+            
+        cost = cost_low + cost_high
                 
         # 5. LogSumExp Aggregation Preparation
         sum_exp += math.exp(ff_cfg.lse_alpha * cost)
