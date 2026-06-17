@@ -26,10 +26,12 @@ objects:
   obs1:
     id: 1
     pos:
-      x: 100.0            # meters
+      x: -100.0            # meters
       y: 2.0              # meters
     yaw: 180.0            # degrees
     speed_kmh: 10.0       # km/h
+
+
 
   #obs2:
   #  id: 2
