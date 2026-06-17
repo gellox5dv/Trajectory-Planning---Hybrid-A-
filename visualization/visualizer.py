@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from matplotlib import transforms
 from models.models import *
+from utils.helper import get_signed_magnitude
 
 # Extended module-level state
 _fig = None
@@ -66,6 +67,30 @@ def visualize_scene(env, ego, vehicle_params, trajectory=None, goal_region=None)
     _ax.set_aspect("equal", adjustable="box")
     _ax.grid(True, color="#555555", linestyle=":")
     _ax.legend(loc="upper left", fontsize=8, facecolor="white", edgecolor="none")
+
+
+    if ego is not None:
+        ego_state = _get_ego_state(ego)
+        # Vektor-Magnituden berechnen
+        v_ms = get_signed_magnitude(ego_state.velocity, ego_state.yaw)
+        a_ms2 = get_signed_magnitude(ego_state.acceleration, ego_state.yaw)
+        a_x_ms2 = ego_state.acceleration.x
+        a_y_ms2 = ego_state.acceleration.y
+
+        v_kmh = v_ms * 3.6
+        
+        telemetry_text = f"Speed: {v_ms:.2f} m/s  ({v_kmh:.1f} km/h)\n Accel: {a_ms2:.2f} m/s², Accel_x: {a_x_ms2:.2f} m/s², Accel_y: {a_y_ms2:.2f} m/s²"
+        
+        # Oben rechts in der Ecke fixieren (x=0.98, y=0.95 relativ zum Fenster)
+        _ax.text(
+            0.98, 0.95, telemetry_text,
+            transform=_ax.transAxes, 
+            fontsize=10,
+            color='white',
+            ha='right',
+            va='top',
+            bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.7, edgecolor='#777777')
+        )
 
     # Conditional camera tracking ---
     if _follow_ego:
