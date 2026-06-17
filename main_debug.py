@@ -1,234 +1,169 @@
-from visualization.visualizer import visualize_scene
-from simulation.simulate import Simulation
-from planner.planner import plan
-from models.models import PlanningRequest, GoalRegion, Vector2D, Trajectory, PredictedEnvironment
-from motion.motion_prediction import predict_motion_constant_velocity
-from visualization.visualizer import visualize_scene
+import time
 import hydra
 from omegaconf import DictConfig
-import threading
-import time
+
+# --- System Components ---
+from simulation.simulate import Simulation
 from controllers.controllers import MPCController
-from utils.helper import get_goal_region, get_signed_magnitude
+from planner.planner import plan
 from prediction.predictivity import predict_environment
-from models.models import *
-from collision.collision import get_ego_lane_info
-from collision.collision import get_distance_to_objects
 
+# --- Visualization ---
+from visualization.visualizer import visualize_scene
+from visualization.tree_visualizer import visualize_search_tree
 
-
-
-
-        
-
-
+# --- Utilities & Physics ---
+from collision.collision import get_ego_lane_info, get_distance_to_objects
+from utils.helper import get_goal_region
+from models.models import PlanningRequest
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     """
-    Main entry point for the autonomous driving stack. Initializes all components, 
-    starts the background controller thread, and runs the high-level planner continuously.
-
-    Args:
-        cfg (DictConfig): The Hydra configuration object containing system and vehicle parameters.
-
-    Returns:
-        None
+    Main entry point for the autonomous driving stack (Debug Environment).
+    Initializes all components, runs the high-level planner, and executes 
+    the control/simulation loop in a defined temporal sequence.
     """
+    
+    # 1. Initialize core modules
     sim = Simulation(cfg)
     controller = MPCController(cfg.vehicle, cfg.controller)
     
     newest_trajectory = None
-
     
+    # Timing constants for the simulation loop
+    SIM_STEP_MS = 100
+    PLAN_EXECUTION_MS = 4000
+    MAX_SIM_STEPS = int(PLAN_EXECUTION_MS / SIM_STEP_MS)
+
     while True:
-        #TODO possibly stop time and wait at the end for remaining time
-        # 1. Fetch environment and state for the planner
+        # ==========================================
+        # PHASE 1: PREPARATION & PREDICTION
+        # ==========================================
         curr_env = sim.get_environment()
         ego_state_stamped = sim.get_ego_state()
-        # TODO: predict environment
-        pred_env = predict_environment(environment = curr_env,
-                                       prediction_horizon = cfg.planner.horizon,
-                                       dt = cfg.planner.dt_sim)
         
+        # Predict environment for the planning horizon
+        pred_env = predict_environment(
+            environment=curr_env,
+            prediction_horizon=cfg.planner.horizon,
+            dt=cfg.planner.dt_sim
+        )
+        
+        # Extract lane information and dynamic speed limits
+        _, _, _, _, _, velocity_limit_lane = get_ego_lane_info(
+            ego_state=ego_state_stamped.state,
+            ego_length=cfg.vehicle.length,
+            ego_width=cfg.vehicle.width,
+            ego_rear_to_wheel=cfg.vehicle.rear_to_wheel,  
+            lanes=curr_env.lanes
+        )
+        
+        target_speed = velocity_limit_lane if velocity_limit_lane is not None else 10.0
 
-         # TODO: get dynamic velocity limit
+        # Define the goal region for the A* search
+        goal_region = get_goal_region(
+            curr_ego_state=ego_state_stamped,
+            lanes=curr_env.lanes,
+            horizon=cfg.planner.horizon,
+            length=3.0,
+            width=3.0,
+            target_speed=target_speed
+        )
         
-        velocity_limit = 10.0
-
-        _,_,_,_,_,velocity_limit_lane = get_ego_lane_info(ego_state=ego_state_stamped.state,
-                                                           ego_length = cfg.vehicle.length,
-                                                           ego_width = cfg.vehicle.width,
-                                                           ego_rear_to_wheel = cfg.vehicle.width,
-                                                           lanes = curr_env.lanes)
-         
-        if(velocity_limit_lane is not None):
-            velocity_limit = velocity_limit_lane
-
-        
-        # TODO: calculate goal region (dummy arguments used)
-        goal_region = get_goal_region(curr_ego_state=ego_state_stamped,
-                                      lanes=curr_env.lanes,
-                                      horizon=cfg.planner.horizon,
-                                      length=3.0,
-                                      width=3.0,
-                                      target_speed= velocity_limit_lane)
-        
-       
-       
-        
+        # ==========================================
+        # PHASE 2: TRAJECTORY PLANNING
+        # ==========================================
         planning_request = PlanningRequest(
             start_state=ego_state_stamped,
             goal_region=goal_region,
-            target_speed=velocity_limit,
+            target_speed=target_speed,
             environment=pred_env
         )
-        # 2. Compute the plan 
-        plan_result = plan(planning_request, cfg, True)
-        # 3. Pass the new trajectory to the controller
+        
+        # Compute the trajectory
+        plan_result = plan(planning_request, cfg, debug=True)
+        
         if plan_result.success and plan_result.trajectory is not None:
-            print('Path found')
+            print("Path found successfully.")
             newest_trajectory = plan_result.trajectory
         else:
-            newest_trajectory = plan_result.trajectory
-            print(f"No path found: {plan_result.status_message}")
-
-
-            # If no path is found, the old trajectory remains in shared_state.
-            # The MPC will simply continue following it (default fallback behavior).
+            # Keep the old trajectory as fallback 
+            print(f"No path found: {plan_result.status_message}. Using fallback trajectory.")
         
+        # Debugging: Print current distance to all objects
+        distances, is_collision = get_distance_to_objects(
+            current_ego=ego_state_stamped,
+            previous_ego=ego_state_stamped,
+            predicted_env=pred_env,
+            ego_length=cfg.vehicle.length,
+            ego_width=cfg.vehicle.width,
+            ego_rear_to_wheel=cfg.vehicle.rear_to_wheel,  
+            resolution_ms=10,
+            calc_exact_distance=5.0
+        )
+        print(f"Distance to objects: {distances} | Collision: {is_collision}")
         
-        res = get_distance_to_objects(current_ego=ego_state_stamped,
-                                previous_ego=ego_state_stamped,
-                                predicted_env=pred_env,
-                                ego_length = cfg.vehicle.length,
-                                ego_width = cfg.vehicle.width,
-                                ego_rear_to_wheel = cfg.vehicle.width,
-                                resolution_ms=10,
-                                calc_exact_distance=5)
-        
-        print(res)
-        
-        
-        delta_time = 100
-        x = 0
-
-        
-
-        from visualization.tree_visualizer import visualize_search_tree
+        # Export search tree visualization to HTML
         visualize_search_tree(
             plan_result=plan_result,
             pred_env=pred_env,
             goal_region=goal_region,
             cfg=cfg,
-            output_filename="debug_tree.html",
-            vehicle_cfg = cfg.vehicle
+            vehicle_cfg=cfg.vehicle,
+            output_filename="debug_tree.html"
         )
 
+        # ==========================================
+        # PHASE 3: CONTROL & SIMULATION LOOP
+        # ==========================================
+        step_counter = 0
         
-
-        #while x < cfg.planner.max_compute_time / delta_time:
-        while x < 4000 / delta_time:
-
+        while step_counter < MAX_SIM_STEPS:
             start_time = time.perf_counter()
-            # 1. Get current state from simulation
+            
+            # 1. Fetch current simulation state
             ego_state = sim.get_ego_state()
-            # 2. Safely read the latest trajectory using the lock
-
             curr_env = sim.get_environment()
-
-           
- 
-           
-            # 3. Compute control commands and apply fallback if necessary
+            
+            # 2. Compute control commands via MPC
             acc, steer_rate = 0.0, 0.0
+            
             if newest_trajectory is not None:
                 try:
                     acc, steer_rate = controller.compute_control(ego_state, newest_trajectory)
-                except Exception:
-                    # Fallback: Emergency braking if the MPC fails to find a solution
-                    acc, steer_rate = cfg.vehicle.max_deceleration, 0.0 
-                    print(Exception)
-                    print('The Controller didnt find a solution -> breaking')
+                except Exception as e:
+                    print(f"Controller failed ({e}). Triggering emergency brake.")
+                    acc = cfg.vehicle.max_deceleration
+                    steer_rate = 0.0
             else:
-                # No trajectory available yet -> standstill / emergency brake
-                acc = cfg.vehicle.max_deceleration #TODO aus config maximale verzögerung auslesen
-            # 4. Advance the simulation (the controller drives the simulation time)
-            dt_ms = int(delta_time)
-            sim.step(acc, steer_rate, dt_ms)
-            # 4. Visualization (runs safely in the main thread)
-
+                print("No trajectory available. Triggering emergency brake.")
+                acc = cfg.vehicle.max_deceleration
+                
+            # 3. Advance the physics simulation
+            sim.step(acc, steer_rate, SIM_STEP_MS)
             
+            # 4. Update real-time visualization
             visualize_scene(
                 env=curr_env,
-               ego=ego_state,
+                ego=ego_state,
                 vehicle_params=cfg.vehicle,
-                trajectory=plan_result.trajectory,
-                goal_region = goal_region
-           )
+                trajectory=newest_trajectory, 
+                goal_region=goal_region
+            )
             
-            end_time = time.perf_counter()
-            duration = end_time - start_time
-            delta = (delta_time/1000) - duration
-
-            if delta > 0:
-                time.sleep(delta)
+            # 5. Enforce real-time execution limits
+            compute_duration = time.perf_counter() - start_time
+            sleep_duration = (SIM_STEP_MS / 1000.0) - compute_duration
+            
+            if sleep_duration > 0:
+                time.sleep(sleep_duration)
             else:
-                print('Compute to slow for realtime sim')
-                #print(delta)
+                print(f"Warning: Compute too slow for real-time tracking (overtime: {-sleep_duration:.4f}s)")
+                
+            step_counter += 1
 
-            x = x +1
-        
-   
 
 if __name__ == "__main__":
     main()
-
-
-#@hydra.main(version_base=None, config_path="configs", config_name="config")
-def _main(cfg: DictConfig):
-    sim = Simulation()
-    controller = None #TODO init of the controller
-    #TODO start thread for controller
-
-    while True:
-
-        curr_env = sim.get_environment()
-        ego_state_stamped = sim.get_ego_state()
-
-        #TODO predict environment
-        pred_env = curr_env
-        ############
-
-        #TODO calculate goal region
-        goal_region = GoalRegion(...)
-        #############
-
-        #TODO get velocity_limit -> target_speed
-        velocity_limit = None
-        
-
-        planning_request = PlanningRequest(start_state=ego_state_stamped,
-                                           goal_region=goal_region,
-                                           target_speed=velocity_limit,
-                                           environment=pred_env)
-
-        plan_result = plan(planning_request, cfg)
-
-        if plan_result.success and plan_result.trajectory is not None:
-              #TODO speak with controller thread
-              ...
-
-        else:
-            print(f"No path found: {plan_result.status_message}")
-            #TODO: Vehicle should follow the last caluclated trajectorie and break 
-        
-        #TODO change visualizier to get vehicle config
-        visualize_scene(
-            env=curr_env,
-            ego=ego_state_stamped,
-            vehicle_params=vehicle_params,
-            trajectory=plan_result.trajectory
-        )
-        
