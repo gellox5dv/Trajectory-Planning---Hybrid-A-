@@ -14,40 +14,6 @@ class Vector2D:
 
 
 # ============================================================
-# Vehicle Model
-# ============================================================
-
-@dataclass
-class VehicleParameters:
-    max_steer: float            # maximum steering angle wheels [rad]
-    max_steer_rate: float       # maximum steering rate wheels [rad/s]
-
-    lf: float                   # CoG to front axle [m]
-    lr: float                   # CoG to rear axle [m]
-    Iz: float                   #Moment of inertia [kg.m2]
-
-    wheel_length: float          #Wheel length [m]
-    wheel_width: float           #Wheel width [m]
-    
-    wheel_base: float            #Wheel base [m]
-    track: float                 #Vehile track [m]
-
-    width: float                # vehicle width [m]
-    length: float               # vehicle length [m]
-    rear_to_wheel: float        #Distance rear to axel [m]
-
-    m: float                    # mass [kg]
-
-    Cf: float                   # front cornering stiffness [N/rad]
-    Cr: float                   # rear cornering stiffness [N/rad]
-
-    max_acceleration: float     # max longitudinal acceleration [m/s²]
-    max_deceleration: float     # max braking deceleration [m/s²]
-
-    mu: float                   # tire-road friction coefficient [-]
-
-
-# ============================================================
 # Ego Vehicle State (Planning)
 # ============================================================
 
@@ -109,16 +75,7 @@ class DynamicObjectStamped:
     state: DynamicObject        # object state at this time
 
 
-# ============================================================
-# Dynamic State (for Tracking)
-# ============================================================
 
-@dataclass
-class DynamicState:
-    pos: Vector2D               # position [m]
-    yaw: float                  # heading [rad]
-    velocity: Vector2D          # (vx, vy) [m/s]
-    yaw_rate: float             # yaw rate [rad/s]
 
 
 # ============================================================
@@ -209,6 +166,10 @@ class Trajectory:
     states: List[EgoStateStamped]   # time-parameterized ego states
 
 
+
+from planner.state_node import StateNode
+
+
 @dataclass
 class PlanResult:
     success: bool                       # True if valid plan found
@@ -218,3 +179,5 @@ class PlanResult:
     cost: float                         # total trajectory cost
     
     status_message: str                 # diagnostic info
+
+    debug_root_node: StateNode

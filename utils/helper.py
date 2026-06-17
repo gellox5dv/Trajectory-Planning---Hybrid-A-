@@ -1,8 +1,10 @@
 from math import cos, pi, sin, hypot
 from typing import List, Optional, Tuple
 from configparser import ConfigParser
-from models.models import Vector2D, VehicleParameters, EgoStateStamped, Lane
+from models.models import Vector2D, EgoStateStamped, Lane, GoalRegion
 import copy
+from types import SimpleNamespace
+from omegaconf import OmegaConf
 
 
 def global_to_ego_axis(poi_x: float, poi_y: float, ego_x: float, ego_y: float, ego_yaw: float, poi_yaw: Optional[float] = None) -> Tuple[float, float, Optional[float]]:
@@ -62,36 +64,23 @@ def check_line_intersection(p1: Vector2D, p2: Vector2D, p3: Vector2D, p4: Vector
     return (0 <= t <= 1) and (0 <= u <= 1)
 
 
-def load_vehicle_parameters() -> VehicleParameters:
-    """Load vehicle parameters from the configuration file."""
-
-    config = ConfigParser()
-    config.read('config.ini')
-
-    return VehicleParameters(
-        max_steer = config.getfloat('vehicle', 'max_steer'),
-        max_steer_rate = config.getfloat('vehicle', 'max_steer_rate'),
-        lf = config.getfloat('vehicle', 'lf'),
-        lr = config.getfloat('vehicle', 'lr'),
-        Iz = config.getfloat('vehicle', 'Iz'),
-        wheel_length = config.getfloat('vehicle', 'wheel_length'),
-        wheel_width = config.getfloat('vehicle', 'wheel_width'),
-        wheel_base = config.getfloat('vehicle', 'wheel_base'),
-        track = config.getfloat('vehicle', 'track'),
-        width = config.getfloat('vehicle', 'width'),
-        length = config.getfloat('vehicle', 'length'),
-        rear_to_wheel = config.getfloat('vehicle', 'rear_to_wheel'),
-        m = config.getfloat('vehicle', 'm'),
-        Cf = eval(config.get('vehicle', 'Cf')),
-        Cr = eval(config.get('vehicle', 'Cr')),
-        max_acceleration = config.getfloat('vehicle', 'max_acceleration'),
-        max_deceleration = config.getfloat('vehicle', 'max_deceleration'),
-        mu = config.getfloat('vehicle', 'mu')
-    )
-
-
 def get_magnitude(vector: Vector2D) -> float:
     return hypot(vector.x, vector.y)
+
+def get_signed_magnitude(vector: Vector2D, yaw: float) -> float:
+    """
+    Calculates the longitudinal length of a 2D vector relative to the vehicle's heading.
+    
+    Args:
+        vector (Vector2D): The vector to project (e.g., velocity or acceleration).
+        yaw (float): The current heading of the vehicle in radians.
+        
+    Returns:
+        float: 
+            Positive value: Vector points in the direction of travel (moving forward / accelerating).
+            Negative value: Vector points opposite to the direction of travel (reversing / braking).
+    """
+    return vector.x * cos(yaw) + vector.y * sin(yaw)
 
 
 def get_vector(magnitude: float, direction: float) -> Vector2D:
@@ -170,3 +159,52 @@ def get_nearest_lane_center(ego_state: EgoStateStamped, lanes: List[Lane]) -> Tu
                 nearest_lane_yaw = yaw
 
     return nearest_lane_yaw, nearest_point
+
+
+def get_goal_region(
+    curr_ego_state: EgoStateStamped,
+    lanes: List[Lane],
+    horizon: int,
+    length: float,
+    width: float,
+    target_speed: float = 5.0,
+) -> GoalRegion:
+    """
+    Get the goal region which is horizon seconds ahead in the same lane.
+    """
+    nearest_lane_yaw, nearest_lane_center = get_nearest_lane_center(curr_ego_state, lanes)
+
+    vel = curr_ego_state.state.velocity
+    vel_magnitude = hypot(vel.x, vel.y)
+
+    # Ensure a minimum lookahead distance even when the vehicle is stopped
+    planning_speed = max(vel_magnitude, target_speed)
+    distance_ahead = planning_speed * (horizon / 1000.0)
+
+    goal_center_x = nearest_lane_center.x + distance_ahead * cos(nearest_lane_yaw)
+    goal_center_y = nearest_lane_center.y + distance_ahead * sin(nearest_lane_yaw)
+
+    return GoalRegion(
+        center=Vector2D(x=goal_center_x, y=goal_center_y),
+        length=length,
+        width=width,
+        yaw=nearest_lane_yaw
+    )
+
+
+def convert_cfg_to_native(cfg_obj):
+    """
+    Konvertiert OmegaConf rekursiv in native SimpleNamespace-Objekte.
+    Dies ermöglicht C-Level Zugriffsgeschwindigkeiten auf Attribute.
+    """
+    if hasattr(cfg_obj, "_is_dict"):
+        d = OmegaConf.to_container(cfg_obj, resolve=True)
+    else:
+        d = cfg_obj
+
+    if isinstance(d, dict):
+        return SimpleNamespace(**{k: convert_cfg_to_native(v) for k, v in d.items()})
+    elif isinstance(d, list):
+        return [convert_cfg_to_native(i) for i in d]
+    
+    return d

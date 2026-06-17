@@ -1,6 +1,6 @@
 from models.models import *
 from anytree import NodeMixin
-from motion_primitives import MotionPrimitive
+from planner.motion_primitives import MotionPrimitive
 
 
 class StateNode(NodeMixin):
@@ -13,7 +13,7 @@ class StateNode(NodeMixin):
                  total_cost: float,
                  detailed_costs: Dict[str, float],
                  goal_region_reached: bool,
-                 depth: float,
+                 node_depth: float,
                  parent: NodeMixin = None,
                  motion_primitive: MotionPrimitive = None):
         super().__init__()
@@ -25,7 +25,7 @@ class StateNode(NodeMixin):
         self.total_cost = total_cost
         self.detailed_costs = detailed_costs
         self.goal_region_reached = goal_region_reached
-        self.depth = depth
+        self.node_depth =  node_depth
         self.parent = parent
         self.motion_primitive = motion_primitive
 
