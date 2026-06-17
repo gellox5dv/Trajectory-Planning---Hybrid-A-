@@ -19,7 +19,8 @@ def install_packages():
         "shapely",
         "matplotlib",
         "casadi",
-        "snakeviz"
+        "snakeviz",
+        "bokeh"
     ]
 
     for package in packages:
