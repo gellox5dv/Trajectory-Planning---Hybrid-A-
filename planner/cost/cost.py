@@ -132,9 +132,11 @@ def calculate_node_cost(
     # ---------------------------------------------------------
     # 5. Safety & Compliance: Lane Keeping
     # ---------------------------------------------------------
-    lane_id, dist_to_center, yaw_offset, occlusion, is_opposite = get_ego_lane_info(
+    lane_id, dist_to_center, yaw_offset, occlusion, is_opposite, target_speed = get_ego_lane_info(
         ego_state=curr_state.state,
-        vehicle_cfg=veh_cfg,
+        ego_length = veh_cfg.length,
+        ego_width = veh_cfg.width,
+        ego_rear_to_wheel = veh_cfg.rear_to_wheel,
         lanes=request.environment.lanes
     )
     
@@ -184,7 +186,7 @@ def calculate_heuristic_cost(
     """
     
     # 1. Calculate scalar speed from Vector2D
-    current_speed = math.hypot(state.state.velocity.x, state.state.velocity.y)
+    current_speed = get_signed_magnitude(state.state.velocity, state.state.yaw)
 
     # 2. Get max steer angle for this specific speed
     max_steer = _get_max_steering_angle(current_speed, veh_cfg, mp_cfg)
