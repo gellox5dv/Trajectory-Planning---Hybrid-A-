@@ -1,12 +1,12 @@
 import heapq
-from math import pi, cos, sin
-from utils.helper import get_bbox_corners, get_magnitude, get_vector
+from math import pi, cos, sin, hypot
+from utils.helper import get_bbox_corners, get_magnitude, get_vector, get_signed_magnitude
 from typing import Tuple, List, Optional, overload, Union, Sequence
 from models.models import (
     EgoState, EgoStateStamped, DynamicObject, DynamicObjectStamped,
     Lane, Environment, PredictedEnvironment, Vector2D
 )
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import Polygon
 
 MovingObject = Union[EgoStateStamped, DynamicObjectStamped]
 
@@ -20,13 +20,32 @@ def _ego_object_distance(
     ego_length: float,
     ego_width: float,
     ego_rear_to_wheel: float,
+    exact_calc_threshold: float
 ) -> float:
-    """Calculate the distance from the ego vehicle to a dynamic object."""
+    """
+    Calculate the distance from the ego vehicle to a dynamic object.
+    
+    Uses a fast circular bounding box approximation for objects farther away 
+    than `exact_calc_threshold`, and precise Shapely polygon math for closer objects.
+    """
     ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(ego_state)
-    ego_x_center = ego_x + (ego_length / 2 - ego_rear_to_wheel) * cos(ego_yaw)
-    ego_y_center = ego_y + (ego_length / 2 - ego_rear_to_wheel) * sin(ego_yaw)
+    ego_x_center = ego_x + (ego_length / 2.0 - ego_rear_to_wheel) * cos(ego_yaw)
+    ego_y_center = ego_y + (ego_length / 2.0 - ego_rear_to_wheel) * sin(ego_yaw)
+    
     obj_x_center, obj_y_center, obj_yaw = get_x_y_yaw_from_state(obj)
 
+    # 1. Fast Path: Circular Bounding Box Approximation
+    center_dist = hypot(ego_x_center - obj_x_center, ego_y_center - obj_y_center)
+    ego_radius = hypot(ego_length, ego_width) / 2.0
+    obj_radius = hypot(obj.state.length, obj.state.width) / 2.0
+    
+    min_possible_dist = center_dist - ego_radius - obj_radius
+
+    # If the objects are safely far away, skip Shapely completely.
+    if min_possible_dist > exact_calc_threshold:
+        return min_possible_dist
+
+    # 2. Slow Path: Exact Polygon Distance for close-range accuracy
     ego_corners = get_bbox_corners(ego_x_center, ego_y_center, ego_yaw, ego_length, ego_width)
     obj_corners = get_bbox_corners(obj_x_center, obj_y_center, obj_yaw, obj.state.length, obj.state.width)
 
@@ -129,9 +148,9 @@ def _interpolate_states(
     
     dx = (end_state.state.pos.x - start_state.state.pos.x)
     dy = (end_state.state.pos.y - start_state.state.pos.y)
-    dvel = (get_magnitude(end_state.state.velocity) - get_magnitude(start_state.state.velocity))
+    dvel = (get_signed_magnitude(end_state.state.velocity, end_state.state.yaw) - get_signed_magnitude(start_state.state.velocity, start_state.state.yaw))
     dyaw = (end_state.state.yaw - start_state.state.yaw + pi) % (2 * pi) - pi
-    start_vel_magnitude = get_magnitude(start_state.state.velocity)
+    start_vel_magnitude = get_signed_magnitude(start_state.state.velocity, start_state.state.yaw)
 
     interpolated_states = [start_state]
     t = 0
@@ -162,8 +181,9 @@ def get_distance_to_objects(
     predicted_env: PredictedEnvironment,
     ego_length: float,
     ego_width: float,
-    ego_rear_to_wheel, float,
-    resolution_ms: int
+    ego_rear_to_wheel: float,
+    resolution_ms: int,
+    calc_exact_distance: float
 ) -> Tuple[Optional[Sequence[Tuple[int, float]]], bool]:
     """Checks the interval between two planning steps for collisions and calculates aggregated distances to all objects."""
     
@@ -190,7 +210,7 @@ def get_distance_to_objects(
                 break
             
             obj_state = obj_states[0][1]
-            distance = _ego_object_distance(ego_state, obj_state, ego_length, ego_width, ego_rear_to_wheel)
+            distance = _ego_object_distance(ego_state, obj_state, ego_length, ego_width, ego_rear_to_wheel, calc_exact_distance)
             min_distance = min(min_distance, distance)
 
             if distance < 0.1:  # collision threshold
@@ -201,61 +221,40 @@ def get_distance_to_objects(
     return distance_results, False
 
 
-
-def _get_lane_occlusion(
-    ego_state: EgoStateStamped,
-    lane: Lane,
-    ego_rear_to_wheel: float,
-    ego_length: float,
-    ego_width: float,
-) -> float:
-    """Calculate the area of the ego vehicle on the lane."""
-    ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(ego_state)
-    ego_center_offset = ego_length / 2 - ego_rear_to_wheel
-    ego_x += ego_center_offset * cos(ego_yaw)
-    ego_y += ego_center_offset * sin(ego_yaw)
-
-    ego_corners = get_bbox_corners(ego_x, ego_y, ego_yaw, ego_length, ego_width)
-    ego_polygon = Polygon([(corner.x, corner.y) for corner in ego_corners])
-
-    lane_centerline = [(point.x, point.y) for point, _ in lane.centerline]
-    if len(lane_centerline) < 2:
-        return 0.0
-
-    lane_line = LineString(lane_centerline)
-    if lane_line.length == 0.0:
-        return 0.0
-
-    lane_polygon = lane_line.buffer(lane.width / 2, cap_style='flat', join_style='mitre')
-
-    intersection_area = ego_polygon.intersection(lane_polygon).area
-    return intersection_area
-
-
 def _get_lane_offset(
-    ego_state: EgoStateStamped,
-    lane: Lane
+    ego_center_x: float, 
+    ego_center_y: float, 
+    ego_yaw: float, 
+    lane: Lane, 
+    closest_idx: int
 ) -> Tuple[float, float]:
-    """Calculate the offset of the ego vehicle from the lane centerline."""
-    ego_x, ego_y, ego_yaw = get_x_y_yaw_from_state(ego_state)
-
+    """Calculate the offset of the ego vehicle's geometric center from the lane centerline."""
     min_distance = float('inf')
-    for i in range(len(lane.centerline) - 1):
+    yaw_offset = 0.0
+
+    start_idx = max(0, closest_idx - 1)
+    end_idx = min(len(lane.centerline) - 1, closest_idx + 1)
+
+    for i in range(start_idx, end_idx):
         p1, yaw1 = lane.centerline[i]
         p2, yaw2 = lane.centerline[i + 1]
 
-        lane_vec = Vector2D(x = p2.x - p1.x, y = p2.y - p1.y)
-        lane_len = (lane_vec.x ** 2 + lane_vec.y ** 2) ** 0.5
-        if lane_len == 0.0:
+        dx = p2.x - p1.x
+        dy = p2.y - p1.y
+        
+        sq_len = dx * dx + dy * dy
+        if sq_len == 0.0:
             continue
         
-        lane_unit = Vector2D(x = lane_vec.x / lane_len, y = lane_vec.y / lane_len)
-        normal_vec = Vector2D(x = -lane_unit.y, y = lane_unit.x)
+        inv_len = 1.0 / (sq_len ** 0.5)
+        nx = -dy * inv_len
+        ny = dx * inv_len
 
-        distance_to_line = abs((ego_x - p1.x) * normal_vec.x + (ego_y - p1.y) * normal_vec.y)
+        distance_to_line = abs((ego_center_x - p1.x) * nx + (ego_center_y - p1.y) * ny)
+        
         if distance_to_line < min_distance:
             min_distance = distance_to_line
-            yaw_offset = (ego_yaw - (yaw1 + yaw2) / 2) % (2 * pi) - pi
+            yaw_offset = (ego_yaw - (yaw1 + yaw2) / 2.0 + pi) % (2 * pi) - pi
 
     return min_distance, yaw_offset
 
@@ -272,18 +271,76 @@ def get_ego_lane_info(
     lane_id: int,
     distance_to_lane_center: float [m]
     yaw_offset_to_lane_direction: float, [rad]
-    lane_occlusion: float [e.g. 0.8]
+    lane_occlusion: float Ratio [0.0 - 1.0] (1.0 = fully on lane)
     opposite_lane: bool
     speed_limit: float [m/s]
     """
-    
     occlusion_sum = 0.0
-    for lane in lanes:
-        lane_occlusion = _get_lane_occlusion(EgoStateStamped(timestamp=0, state=ego_state), lane, ego_rear_to_wheel, ego_length, ego_width)
-        occlusion_sum += lane_occlusion
-        if lane_occlusion > 0.5:
-            distance_to_lane_center, yaw_offset = _get_lane_offset(EgoStateStamped(timestamp=0, state=ego_state), lane)
-            opposite_lane = (yaw_offset > pi / 2 or yaw_offset < -pi / 2)
-            return lane.id, distance_to_lane_center, yaw_offset, occlusion_sum, opposite_lane, lane.speed_limit
+    best_lane_id = -1
+    best_dist = float('inf')
+    best_yaw_offset = 0.0
+    is_opposite = False
+    best_speed_limit = 0.0
     
-    return -1, float('inf'), 0.0, occlusion_sum, False, 0.0
+    # 1. Koordinaten zwingend auf die geometrische Mitte verschieben!
+    ego_yaw = ego_state.yaw
+    ego_center_offset = ego_length / 2.0 - ego_rear_to_wheel
+    ego_center_x = ego_state.pos.x + ego_center_offset * cos(ego_yaw)
+    ego_center_y = ego_state.pos.y + ego_center_offset * sin(ego_yaw)
+
+    # Rejection Radius basierend auf der Mitte
+    max_ego_radius = (ego_length**2 + ego_width**2)**0.5 / 2.0
+
+    for lane in lanes:
+        if not lane.centerline:
+            continue
+            
+        closest_sq_dist = float('inf')
+        closest_idx = -1
+        
+        for i, (p, _) in enumerate(lane.centerline):
+            dx = p.x - ego_center_x
+            dy = p.y - ego_center_y
+            sq_dist = dx * dx + dy * dy
+            if sq_dist < closest_sq_dist:
+                closest_sq_dist = sq_dist
+                closest_idx = i
+
+        rejection_threshold = (lane.width / 2.0) + max_ego_radius + 2.0
+        if closest_sq_dist > rejection_threshold**2:
+            continue
+
+        # Offset mit den CENTER Koordinaten berechnen
+        dist_to_center, yaw_offset = _get_lane_offset(ego_center_x, ego_center_y, ego_yaw, lane, closest_idx)
+
+        if dist_to_center > (lane.width / 2.0) + max_ego_radius:
+            continue
+
+        # Mathematische Approximation der Überschneidung
+        lateral_projection = abs(ego_width * cos(yaw_offset)) + abs(ego_length * sin(yaw_offset))
+        half_proj = lateral_projection / 2.0
+        
+        left_edge_ego = dist_to_center - half_proj
+        right_edge_ego = dist_to_center + half_proj
+        half_lane = lane.width / 2.0
+        
+        overlap_left = max(-half_lane, min(half_lane, left_edge_ego))
+        overlap_right = max(-half_lane, min(half_lane, right_edge_ego))
+        overlap_width = overlap_right - overlap_left
+        
+        # WICHTIG: Das ist nun eine reine Ratio zwischen 0.0 und 1.0!
+        if lateral_projection > 0:
+            lane_occlusion_ratio = overlap_width / lateral_projection
+        else:
+            lane_occlusion_ratio = 0.0
+
+        occlusion_sum += lane_occlusion_ratio
+
+        if lane_occlusion_ratio > 0.5 and best_lane_id == -1:
+            best_lane_id = lane.id
+            best_dist = dist_to_center
+            best_yaw_offset = yaw_offset
+            is_opposite = (yaw_offset > pi / 2 or yaw_offset < -pi / 2)
+            best_speed_limit = lane.speed_limit
+            
+    return best_lane_id, best_dist, best_yaw_offset, occlusion_sum, is_opposite, best_speed_limit
