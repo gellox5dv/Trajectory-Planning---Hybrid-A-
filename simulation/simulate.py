@@ -3,7 +3,7 @@ from math import atan2, pi
 import copy
 from omegaconf import DictConfig
 from models.models import EgoStateStamped, EgoState, Environment, Vector2D, DynamicObjectStamped
-from utils.helper import get_vector
+from utils.helper import get_vector, get_signed_magnitude
 from motion.bicycle import DynamicBicycleModel
 from motion.motion_prediction import predict_motion_constant_velocity
 import numpy as np
@@ -17,7 +17,7 @@ class Simulation:
             state = EgoState(
                 pos = Vector2D(x = 50.0, y = 2.0),
                 yaw = 0.0,
-                velocity = get_vector(13.0 + 8/9, 0.0),
+                velocity = get_vector(5.0 + 8/9, 0.0),
                 acceleration = get_vector(0.0, 0.0),
                 steering_angle = 0.0
             )
@@ -51,17 +51,13 @@ class Simulation:
         noisy_state.state.pos.y += float(np.random.normal(0.0, pos_y_std))
         noisy_state.state.yaw += float(np.random.normal(0.0, yaw_std))
 
-        velocity = noisy_state.state.velocity
-        velocity_magnitude = float(np.hypot(velocity.x, velocity.y))
-        velocity_direction = atan2(velocity.y, velocity.x) if velocity_magnitude > 1e-12 else noisy_state.state.yaw
-        velocity_magnitude = max(0.0, velocity_magnitude + float(np.random.normal(0.0, velocity_std)))
-        noisy_state.state.velocity = get_vector(velocity_magnitude, velocity_direction)
+        signed_speed = get_signed_magnitude(noisy_state.state.velocity, noisy_state.state.yaw)
+        noisy_speed = signed_speed + float(np.random.normal(0.0, velocity_std))
+        noisy_state.state.velocity = get_vector(noisy_speed, noisy_state.state.yaw)
 
-        acc = noisy_state.state.acceleration
-        acc_magnitude = float(np.hypot(acc.x, acc.y))
-        acc_direction = atan2(acc.y, acc.x) if acc_magnitude > 1e-12 else noisy_state.state.yaw
-        acc_magnitude = max(0.0, acc_magnitude + float(np.random.normal(0.0, acc_std)))
-        noisy_state.state.acceleration = get_vector(acc_magnitude, acc_direction)
+        signed_acc = get_signed_magnitude(noisy_state.state.acceleration, noisy_state.state.yaw)
+        noisy_acc = signed_acc + float(np.random.normal(0.0, acc_std))
+        noisy_state.state.acceleration = get_vector(noisy_acc, noisy_state.state.yaw)
 
         return noisy_state
     
@@ -104,17 +100,13 @@ class Simulation:
         obj.state.pos.y += float(np.random.normal(0.0, pos_y_std))
         obj.state.yaw += float(np.random.normal(0.0, yaw_std))
 
-        velocity = obj.state.velocity
-        velocity_magnitude = float(np.hypot(velocity.x, velocity.y))
-        velocity_direction = atan2(velocity.y, velocity.x) if velocity_magnitude > 1e-12 else obj.state.yaw
-        velocity_magnitude = max(0.0, velocity_magnitude + float(np.random.normal(0.0, velocity_std)))
-        obj.state.velocity = get_vector(velocity_magnitude, velocity_direction)
+        signed_speed = get_signed_magnitude(obj.state.velocity, obj.state.yaw)
+        noisy_speed = signed_speed + float(np.random.normal(0.0, velocity_std))
+        obj.state.velocity = get_vector(noisy_speed, obj.state.yaw)
 
-        acc = obj.state.acceleration
-        acc_magnitude = float(np.hypot(acc.x, acc.y))
-        acc_direction = atan2(acc.y, acc.x) if acc_magnitude > 1e-12 else obj.state.yaw
-        acc_magnitude = max(0.0, acc_magnitude + float(np.random.normal(0.0, acc_std)))
-        obj.state.acceleration = get_vector(acc_magnitude, acc_direction)
+        signed_acc = get_signed_magnitude(obj.state.acceleration, obj.state.yaw)
+        noisy_acc = signed_acc + float(np.random.normal(0.0, acc_std))
+        obj.state.acceleration = get_vector(noisy_acc, obj.state.yaw)
 
 
     def apply_control(self, acc: float, steer_rate: float) -> None:
