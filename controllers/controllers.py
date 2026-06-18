@@ -4,7 +4,7 @@ import casadi as ca
 import math
 import numpy as np
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from omegaconf import DictConfig
 
 from models.models import (
@@ -225,7 +225,8 @@ class MPCController:
         self,
         ego_state: EgoStateStamped,
         trajectory: Trajectory,
-    ) -> Tuple[float, float]:
+        first_only: bool = True,
+    ) -> Tuple[float, float] | List[Tuple[float, float]]:
 
         px = ego_state.state.pos.x
         py = ego_state.state.pos.y
@@ -281,15 +282,27 @@ class MPCController:
         )
 
         sol = self.opti.solve()
+        
+        if first_only:
+            u0 = sol.value(
+                self.U[:, 0]
+            )
 
-        u0 = sol.value(
-            self.U[:, 0]
-        )
+            acceleration = float(u0[0])
+            steering_rate = float(u0[1])
 
-        acceleration = float(u0[0])
-        steering_rate = float(u0[1])
+            return (
+                acceleration,
+                steering_rate,
+            )
+        
+        else:
 
-        return (
-            acceleration,
-            steering_rate,
-        )
+            u = []
+            
+            for i in range(self.N):
+                ui = sol.value(self.U[:, i])
+                acc, steer = float(ui[0]), float(ui[1])
+                u.append((acc, steer))
+            
+            return u
