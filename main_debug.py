@@ -132,7 +132,7 @@ def main(cfg: DictConfig) -> None:
             
             if newest_trajectory is not None:
                 try:
-                    acc, steer_rate = controller.compute_control(ego_state, newest_trajectory)
+                    acc, steer_rate = controller.compute_control(ego_state, newest_trajectory)[0]
                 except Exception as e:
                     print(f"Controller failed ({e}). Triggering emergency brake.")
                     acc = cfg.vehicle.max_deceleration

@@ -226,7 +226,7 @@ class MPCController:
         ego_state: EgoStateStamped,
         trajectory: Trajectory,
         first_only: bool = True,
-    ) -> Tuple[float, float] | List[Tuple[float, float]]:
+    ) -> List[Tuple[float, float]]:
 
         px = ego_state.state.pos.x
         py = ego_state.state.pos.y
@@ -291,10 +291,10 @@ class MPCController:
             acceleration = float(u0[0])
             steering_rate = float(u0[1])
 
-            return (
+            return [(
                 acceleration,
                 steering_rate,
-            )
+            )]
         
         else:
 
