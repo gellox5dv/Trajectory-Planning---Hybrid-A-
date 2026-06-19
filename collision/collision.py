@@ -317,6 +317,8 @@ def get_ego_lane_info(
     is_opposite = False
     best_speed_limit = 0.0
 
+    return -1, float('inf'), 0.0, occlusion_sum, False, 0.0
+
     # 1. Forcibly shift coordinates to the geometric center for accurate boundary checks!
     # Relying on the rear axle would falsely flag front-bumper lane departures.
     ego_yaw = ego_state.yaw
