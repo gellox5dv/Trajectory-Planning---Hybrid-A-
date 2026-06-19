@@ -9,9 +9,11 @@ from omegaconf import DictConfig
 
 from models.models import (
     EgoStateStamped,
+    EgoState,
     Trajectory,
+    Vector2D
 )
-from utils.helper import get_magnitude
+from utils.helper import get_magnitude, get_signed_magnitude, get_vector
 
 
 class MPCController:
@@ -42,18 +44,18 @@ class MPCController:
         self.max_delta = vehicle_params.max_steer
         self.max_delta_rate = vehicle_params.max_steer_rate
 
-        # tracking weights
+        # Tracking weights
         self.Qx = controller_cfg.get("Q_x", 5.0)
         self.Qy = controller_cfg.get("Q_y", 5.0)
         self.Qyaw = controller_cfg.get("Q_yaw", 10.0)
         self.Qv = controller_cfg.get("Q_v", 1.0)
         self.Qdelta = controller_cfg.get("Q_delta", 0.1)
 
-        # control effort
+        # Control effort penalties
         self.Ra = controller_cfg.get("R_a", 0.1)
         self.Rsr = controller_cfg.get("R_sr", 0.1)
 
-        # input rate penalties
+        # Input rate penalties
         self.Rda = controller_cfg.get("R_da", 1.0)
         self.Rdsr = controller_cfg.get("R_dsr", 1.0)
 
@@ -170,6 +172,55 @@ class MPCController:
         self.REF = REF
         self.U = U
 
+    def _interpolate_trajectory(self, trajectory: Trajectory, target_time_ms: int) -> EgoState:
+        """
+        Interpolates the trajectory to return an exact EgoState for a given target timestamp.
+        """
+        states = trajectory.states
+        
+        # 1. Boundary check: Return first or last state if outside of trajectory timeframe
+        if target_time_ms <= states[0].timestamp:
+            return states[0].state
+        if target_time_ms >= states[-1].timestamp:
+            return states[-1].state
+            
+        # 2. Find the correct time slot for interpolation
+        for i in range(len(states) - 1):
+            s1 = states[i]
+            s2 = states[i + 1]
+            
+            if s1.timestamp <= target_time_ms <= s2.timestamp:
+                dt_total = s2.timestamp - s1.timestamp
+                
+                # Safety check to avoid division by zero
+                if dt_total == 0:
+                    return s1.state
+                    
+                ratio = (target_time_ms - s1.timestamp) / float(dt_total)
+                
+                # Spatial interpolation (x, y)
+                x = s1.state.pos.x + ratio * (s2.state.pos.x - s1.state.pos.x)
+                y = s1.state.pos.y + ratio * (s2.state.pos.y - s1.state.pos.y)
+                
+                # Yaw interpolation (with modulo to prevent 360-degree jumps)
+                yaw_diff = (s2.state.yaw - s1.state.yaw + math.pi) % (2 * math.pi) - math.pi
+                yaw = s1.state.yaw + ratio * yaw_diff
+                
+                # Velocity interpolation using signed magnitude
+                v1 = get_signed_magnitude(s1.state.velocity, s1.state.yaw)
+                v2 = get_signed_magnitude(s2.state.velocity, s2.state.yaw)
+                v = v1 + ratio * (v2 - v1)
+                
+                return EgoState(
+                    pos=Vector2D(x=x, y=y),
+                    yaw=yaw,
+                    velocity=get_vector(v, yaw),
+                    acceleration=Vector2D(x=0.0, y=0.0),
+                    steering_angle=0.0
+                )
+                
+        return states[-1].state
+
     def compute_control(
         self,
         ego_state: EgoStateStamped,
@@ -180,8 +231,8 @@ class MPCController:
         py = ego_state.state.pos.y
 
         yaw = ego_state.state.yaw
-        v = get_magnitude(
-            ego_state.state.velocity
+        v = get_signed_magnitude(
+            ego_state.state.velocity, ego_state.state.yaw
         )
 
         delta = getattr(
@@ -199,21 +250,23 @@ class MPCController:
         ])
 
         ref = np.zeros((5, self.N + 1))
+        
+        # Base time of the ego vehicle to start the prediction
+        current_time_ms = ego_state.timestamp
+        dt_ms = int(self.dt * 1000)
 
         for k in range(self.N + 1):
-
-            idx = min(
-                k,
-                len(trajectory.states) - 1,
-            )
-
-            s = trajectory.states[idx].state
+            # Calculate the exact target time for the current MPC node
+            target_time_ms = current_time_ms + k * dt_ms
+            
+            # Interpolate the trajectory state for the target time
+            s = self._interpolate_trajectory(trajectory, target_time_ms)
 
             ref[:, k] = [
                 s.pos.x,
                 s.pos.y,
                 s.yaw,
-                get_magnitude(s.velocity),
+                get_signed_magnitude(s.velocity, s.yaw),
                 0.0,
             ]
 

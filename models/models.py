@@ -75,16 +75,7 @@ class DynamicObjectStamped:
     state: DynamicObject        # object state at this time
 
 
-# ============================================================
-# Dynamic State (for Tracking)
-# ============================================================
 
-@dataclass
-class DynamicState:
-    pos: Vector2D               # position [m]
-    yaw: float                  # heading [rad]
-    velocity: Vector2D          # (vx, vy) [m/s]
-    yaw_rate: float             # yaw rate [rad/s]
 
 
 # ============================================================
@@ -175,6 +166,10 @@ class Trajectory:
     states: List[EgoStateStamped]   # time-parameterized ego states
 
 
+
+from planner.state_node import StateNode
+
+
 @dataclass
 class PlanResult:
     success: bool                       # True if valid plan found
@@ -184,3 +179,5 @@ class PlanResult:
     cost: float                         # total trajectory cost
     
     status_message: str                 # diagnostic info
+
+    debug_root_node: StateNode

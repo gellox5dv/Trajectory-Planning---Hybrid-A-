@@ -22,7 +22,7 @@ from models.models import (
     EgoStateStamped,
     Vector2D,
 )
-from utils.helper import get_magnitude, get_vector
+from utils.helper import get_magnitude, get_vector, get_signed_magnitude
 
 DEFAULT_COST_CONFIG_PATH = Path(__file__).parent / ".." / "configs" / "cost" / "default_cost_config.yaml"
 
@@ -63,7 +63,7 @@ def bicycle_model(
                           -veh_cfg.max_deceleration,
                            veh_cfg.max_acceleration)
     velocity_new_magnitude = max(
-        get_magnitude(current_state.velocity) + acc_clamped * dt,
+        get_signed_magnitude(current_state.velocity, current_state.yaw) + acc_clamped * dt,
         0.0,
     )
  

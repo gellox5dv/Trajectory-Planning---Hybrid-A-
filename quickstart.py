@@ -18,7 +18,9 @@ def install_packages():
         "hydra-core",
         "shapely",
         "matplotlib",
-        "casadi"
+        "casadi",
+        "snakeviz",
+        "bokeh"
     ]
 
     for package in packages:
