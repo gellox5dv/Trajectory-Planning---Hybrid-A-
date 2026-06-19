@@ -2,6 +2,7 @@ import math
 import sys
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
+import numpy as np
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -9,8 +10,10 @@ if __package__ is None or __package__ == "":
 from models.models import (
     DynamicObject,
     DynamicObjectStamped,
+    EgoState,
     EgoStateStamped,
     Environment,
+    ObjectType,
     PredictedEnvironment,
     Vector2D,
 )
@@ -485,3 +488,296 @@ def is_overtake_gap_safe(
             if dist < safety_distance:
                 return False
     return True
+
+
+# Visual sanity-check for the straight-road overtake prediction scenario.
+def _flatten_predictions(
+    predicted_env: PredictedEnvironment,
+    object_id: int,
+) -> tuple["np.ndarray", "np.ndarray", "np.ndarray", "np.ndarray"]:
+    """Return timestamps, x positions, y positions, and x velocities."""
+    import numpy as np
+
+    predictions = sorted(
+        predicted_env.objects[object_id],
+        key=lambda obj: obj.timestamp,
+    )
+    timestamps = np.array([obj.timestamp for obj in predictions])
+    xs = np.array([obj.state.pos.x for obj in predictions])
+    ys = np.array([obj.state.pos.y for obj in predictions])
+    vxs = np.array([obj.state.velocity.x for obj in predictions])
+    return timestamps, xs, ys, vxs
+
+
+def visualize_prediction(
+    output_path: str = "prediction_visualization.png",
+    show: bool = True,
+) -> None:
+    """
+    Visualize the lead-car stop and oncoming-traffic wait decision.
+
+    The scenario uses only the constant-acceleration predictor:
+      - ego starts behind the lead vehicle
+      - the lead vehicle brakes to zero speed
+      - the oncoming vehicle moves straight in the opposite lane
+      - the lower plot shows when the signed clearance becomes safe
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    prediction_horizon_ms = 6000
+    dt_ms = 200
+    safety_distance_m = 15.0
+
+    ego_state_t0 = EgoStateStamped(
+        timestamp=0,
+        state=EgoState(
+            pos=Vector2D(x=0.0, y=0.0),
+            velocity=Vector2D(x=8.0, y=0.0),
+            acceleration=Vector2D(x=0.0, y=0.0),
+            yaw=0.0,
+            steering_angle=0.0,
+        ),
+    )
+
+    lead_vehicle = DynamicObjectStamped(
+        timestamp=0,
+        state=DynamicObject(
+            id=1,
+            obj_class=ObjectType.VEHICLE,
+            pos=Vector2D(x=20.0, y=0.0),
+            yaw=0.0,
+            velocity=Vector2D(x=8.0, y=0.0),
+            acceleration=Vector2D(x=-2.0, y=0.0),
+            width=1.8,
+            length=4.5,
+        ),
+    )
+
+    oncoming_vehicle = DynamicObjectStamped(
+        timestamp=0,
+        state=DynamicObject(
+            id=2,
+            obj_class=ObjectType.VEHICLE,
+            pos=Vector2D(x=80.0, y=3.5),
+            yaw=np.pi,
+            velocity=Vector2D(x=-12.0, y=0.0),
+            acceleration=Vector2D(x=0.0, y=0.0),
+            width=1.8,
+            length=4.5,
+        ),
+    )
+
+    environment = Environment(objects=[lead_vehicle, oncoming_vehicle], lanes=[])
+    predicted_env = predict_environment(
+        environment,
+        prediction_horizon=prediction_horizon_ms,
+        dt=dt_ms,
+        model="constant_acceleration",
+    )
+
+    lead_obj = find_lead_vehicle(environment, ego_state_t0)
+    oncoming_obj = find_oncoming_vehicle(environment, ego_state_t0)
+    print(f"find_lead_vehicle found id: {lead_obj.state.id if lead_obj else None}")
+    print(
+        "find_oncoming_vehicle found id: "
+        f"{oncoming_obj.state.id if oncoming_obj else None}"
+    )
+
+    lead_id = lead_obj.state.id if lead_obj else lead_vehicle.state.id
+    oncoming_id = (
+        oncoming_obj.state.id if oncoming_obj else oncoming_vehicle.state.id
+    )
+
+    ego_trajectory: List[EgoStateStamped] = []
+    for timestamp in range(0, prediction_horizon_ms + dt_ms, dt_ms):
+        time_s = timestamp / 1000.0
+        ego_trajectory.append(
+            EgoStateStamped(
+                timestamp=timestamp,
+                state=EgoState(
+                    pos=Vector2D(
+                        x=ego_state_t0.state.velocity.x * time_s,
+                        y=0.0,
+                    ),
+                    velocity=ego_state_t0.state.velocity,
+                    acceleration=Vector2D(x=0.0, y=0.0),
+                    yaw=0.0,
+                    steering_angle=0.0,
+                ),
+            )
+        )
+
+    gap_is_safe = is_overtake_gap_safe(
+        predicted_environment=predicted_env,
+        ego_trajectory=ego_trajectory,
+        lead_vehicle_id=lead_id,
+        overtake_start_ms=0,
+        overtake_duration_ms=prediction_horizon_ms,
+        safety_distance=safety_distance_m,
+    )
+    print(f"is_overtake_gap_safe over full horizon: {gap_is_safe}")
+
+    lead_ts, lead_xs, lead_ys, lead_vxs = _flatten_predictions(
+        predicted_env,
+        lead_id,
+    )
+    oncoming_ts, oncoming_xs, oncoming_ys, _ = _flatten_predictions(
+        predicted_env,
+        oncoming_id,
+    )
+    ego_xs = np.array([state.state.pos.x for state in ego_trajectory])
+    ego_ys = np.array([state.state.pos.y for state in ego_trajectory])
+
+    stopped_mask = np.isclose(lead_vxs, 0.0, atol=1e-6)
+    lead_stop_time_ms = int(lead_ts[stopped_mask][0]) if stopped_mask.any() else None
+
+    signed_clearance = np.array(
+        [
+            get_signed_magnitude(
+                Vector2D(
+                    x=oncoming_x - ego_x,
+                    y=oncoming_y - ego_y,
+                ),
+                oncoming_vehicle.state.yaw,
+            )
+            for oncoming_x, oncoming_y, ego_x, ego_y in zip(
+                oncoming_xs,
+                oncoming_ys,
+                ego_xs,
+                ego_ys,
+            )
+        ]
+    )
+    unsafe_mask = signed_clearance < safety_distance_m
+    clear_indices = np.flatnonzero(~unsafe_mask)
+    oncoming_clear_time_ms = (
+        int(oncoming_ts[clear_indices[0]]) if len(clear_indices) else None
+    )
+
+    fig, (ax_top, ax_gap) = plt.subplots(
+        2,
+        1,
+        figsize=(10, 10),
+        height_ratios=[1.4, 1],
+    )
+
+    color_map = plt.cm.viridis
+    norm = plt.Normalize(vmin=0, vmax=prediction_horizon_ms)
+
+    ax_top.plot(
+        ego_xs,
+        ego_ys,
+        color="black",
+        linewidth=2,
+        label="Ego path",
+        zorder=3,
+    )
+    ax_top.scatter(ego_xs, ego_ys, c="black", s=20, zorder=4)
+
+    ax_top.scatter(
+        lead_xs,
+        lead_ys,
+        c=lead_ts,
+        cmap=color_map,
+        norm=norm,
+        s=60,
+        marker="s",
+        edgecolors="black",
+        linewidths=0.5,
+        label="Lead vehicle braking to stop",
+        zorder=3,
+    )
+    oncoming_scatter = ax_top.scatter(
+        oncoming_xs,
+        oncoming_ys,
+        c=oncoming_ts,
+        cmap=color_map,
+        norm=norm,
+        s=60,
+        marker="^",
+        edgecolors="black",
+        linewidths=0.5,
+        label="Oncoming vehicle constant velocity",
+        zorder=3,
+    )
+
+    if lead_stop_time_ms is not None:
+        stop_x = lead_xs[lead_ts == lead_stop_time_ms][0]
+        stop_y = lead_ys[lead_ts == lead_stop_time_ms][0]
+        ax_top.scatter(
+            [stop_x],
+            [stop_y],
+            facecolors="none",
+            edgecolors="red",
+            s=200,
+            linewidths=2,
+            zorder=5,
+            label=f"Lead stopped at {lead_stop_time_ms} ms",
+        )
+
+    ax_top.set_xlabel("x [m]")
+    ax_top.set_ylabel("y [m]")
+    ax_top.set_title("Predicted trajectories: color encodes prediction time")
+    ax_top.legend(loc="upper left", fontsize=8)
+    ax_top.set_aspect("equal", adjustable="datalim")
+    ax_top.grid(True, alpha=0.3)
+
+    color_bar = fig.colorbar(oncoming_scatter, ax=ax_top, pad=0.01)
+    color_bar.set_label("Prediction time [ms]")
+
+    ax_gap.plot(
+        oncoming_ts,
+        signed_clearance,
+        color="tab:red",
+        linewidth=2,
+        label="Signed ego-to-oncoming clearance",
+    )
+    ax_gap.axhline(
+        safety_distance_m,
+        color="black",
+        linestyle="--",
+        label=f"Safety distance ({safety_distance_m} m)",
+    )
+    ax_gap.fill_between(
+        oncoming_ts,
+        signed_clearance,
+        safety_distance_m,
+        where=unsafe_mask,
+        color="red",
+        alpha=0.25,
+        label="Unsafe to overtake",
+    )
+    if lead_stop_time_ms is not None:
+        ax_gap.axvline(
+            lead_stop_time_ms,
+            color="tab:blue",
+            linestyle=":",
+            label=f"Lead stops ({lead_stop_time_ms} ms)",
+        )
+    if oncoming_clear_time_ms is not None:
+        ax_gap.axvline(
+            oncoming_clear_time_ms,
+            color="tab:green",
+            linestyle=":",
+            label=f"Oncoming clear ({oncoming_clear_time_ms} ms)",
+        )
+
+    ax_gap.set_xlabel("Time [ms]")
+    ax_gap.set_ylabel("Signed clearance [m]")
+    ax_gap.set_title(
+        f"Overtake gap safety over time: is_overtake_gap_safe = {gap_is_safe}"
+    )
+    ax_gap.legend(loc="best", fontsize=8)
+    ax_gap.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+if __name__ == "__main__":
+    visualize_prediction()
