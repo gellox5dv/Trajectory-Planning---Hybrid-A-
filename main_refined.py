@@ -67,7 +67,7 @@ def controller_worker(
                 acc, steer_rate = controller.compute_control(ego_state, current_trajectory)
             except Exception:
                 # Fallback: Emergency braking if the MPC fails to find a solution
-                acc, steer_rate = cfg.vehicle.max_deceleration, 0.0 
+                acc, steer_rate = cfg.vehicle.max_deceleration, 0.0
         else:
             # No trajectory available yet -> standstill / emergency brake
             acc = cfg.vehicle.max_deceleration #TODO aus config maximale verzögerung auslesen
@@ -97,7 +97,7 @@ def main(cfg: DictConfig) -> None:
     """
     sim = Simulation(cfg)
     controller = MPCController(cfg.vehicle, cfg.controller)
-    
+
     # Initialize the communication object
     shared_state = SharedState()
 
@@ -105,7 +105,7 @@ def main(cfg: DictConfig) -> None:
     # TODO: argumente anschauen vom controller
     dt_controller_sec = cfg.controller.dt / 1000.0
     ctrl_thread = threading.Thread(
-        target=controller_worker, 
+        target=controller_worker,
         args=(sim, controller, shared_state, dt_controller_sec, cfg),
         daemon=True  # Automatically stops when the main program exits
     )
@@ -122,14 +122,18 @@ def main(cfg: DictConfig) -> None:
             pred_env = predict_environment(environment = curr_env,
                                            prediction_horizon = cfg.planner.horizon,
                                            dt = cfg.planner.dt_sim)
-            
+
             # TODO: calculate goal region (dummy arguments used)
+            horizon_increment = float(cfg.planner.horizon_increment)
+            if horizon_increment > 1.0:
+                horizon_increment /= 100.0
+
             goal_region = get_goal_region(curr_ego_state=ego_state_stamped,
                                           lanes=curr_env.lanes,
-                                          horizon=cfg.planner.horizon * cfg.planner.horizon_increment,
+                                          horizon=cfg.planner.horizon * horizon_increment,
                                           length=3.0,
-                                          width=3.0) 
-            
+                                          width=3.0)
+
             # TODO: get dynamic velocity limit
             velocity_limit = 10.0
 
@@ -140,7 +144,7 @@ def main(cfg: DictConfig) -> None:
                 environment=pred_env
             )
 
-            # 2. Compute the plan 
+            # 2. Compute the plan
             plan_result = plan(planning_request, cfg)
 
             # 3. Pass the new trajectory to the controller
@@ -151,7 +155,7 @@ def main(cfg: DictConfig) -> None:
                 print(f"No path found: {plan_result.status_message}")
                 # If no path is found, the old trajectory remains in shared_state.
                 # The MPC will simply continue following it (default fallback behavior).
-            
+
             # 4. Visualization (runs safely in the main thread)
             visualize_scene(
                 env=curr_env,
@@ -159,7 +163,7 @@ def main(cfg: DictConfig) -> None:
                 vehicle_params=cfg.vehicle,
                 trajectory=plan_result.trajectory
             )
-            
+
     except KeyboardInterrupt:
         print("Shutting down simulation...")
         # Shut down threads cleanly
@@ -191,7 +195,6 @@ def _main(cfg: DictConfig):
 
         #TODO get velocity_limit -> target_speed
         velocity_limit = None
-        
 
         planning_request = PlanningRequest(start_state=ego_state_stamped,
                                            goal_region=goal_region,
@@ -206,8 +209,8 @@ def _main(cfg: DictConfig):
 
         else:
             print(f"No path found: {plan_result.status_message}")
-            #TODO: Vehicle should follow the last caluclated trajectorie and break 
-        
+            #TODO: Vehicle should follow the last caluclated trajectorie and break
+
         #TODO change visualizier to get vehicle config
         visualize_scene(
             env=curr_env,
@@ -215,4 +218,3 @@ def _main(cfg: DictConfig):
             vehicle_params=vehicle_params,
             trajectory=plan_result.trajectory
         )
-        
