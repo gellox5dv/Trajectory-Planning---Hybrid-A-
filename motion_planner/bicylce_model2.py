@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from models.models import DynamicState, EgoInput, EgoState, EgoStateStamped, Vector2D
+from models.models import EgoInput, EgoState, EgoStateStamped, Vector2D
 from omegaconf import DictConfig, OmegaConf
 from utils.helper import get_magnitude, get_vector, global_to_ego_axis
 
@@ -363,6 +363,11 @@ class Vehicle:
             "max_steer_rate": 0.5,
             "max_steer_acceleration": 2.0,
             "steer_response": 4.0,
+            "steer_command_noise_deg": 0.12,
+            "steer_command_dither_deg": 0.18,
+            "steer_command_dither_hz": 2.4,
+            "steer_command_drift_deg": 0.10,
+            "steer_command_drift_hz": 0.35,
             "lf": self.lf,
             "lr": self.lr,
             "wheel_base": self.wheel_base,
@@ -393,6 +398,7 @@ class Vehicle:
         )
         self.beta = 0.0
         self.yaw_rate = 0.0
+        self._rng = np.random.default_rng(7)
 
         self.control = EgoInput(steering_angle=0.0, acceleration=0.0)
         self.viz     = Visualizer(self)
@@ -423,9 +429,28 @@ class Vehicle:
         target_deg = OVERTAKE_PHASES[self._phase_index][1]
         return math.radians(target_deg)
 
+    def _apply_steering_command_realism(self, target_steer: float) -> float:
+        """Add small repeatable driver/actuator imperfections to the demo command."""
+        t_sec = self.state.timestamp / 1000.0
+        dither = math.radians(float(self.veh_cfg.get("steer_command_dither_deg", 0.0)))
+        dither *= math.sin(
+            2.0 * math.pi * float(self.veh_cfg.get("steer_command_dither_hz", 0.0)) * t_sec
+        )
+        drift = math.radians(float(self.veh_cfg.get("steer_command_drift_deg", 0.0)))
+        drift *= math.sin(
+            2.0 * math.pi * float(self.veh_cfg.get("steer_command_drift_hz", 0.0)) * t_sec
+            + 1.2
+        )
+        noise = math.radians(float(self.veh_cfg.get("steer_command_noise_deg", 0.0)))
+        noise *= float(self._rng.normal(0.0, 1.0))
+
+        max_steer = float(self.veh_cfg.max_steer)
+        return max(-max_steer, min(max_steer, target_steer + dither + drift + noise))
+
     def Motion_control(self, dt_ms: int = 50):
         """Track the overtake phase target with the dynamic model."""
         target_steer = self._get_target_steer(dt_ms / 1000.0)
+        target_steer = self._apply_steering_command_realism(target_steer)
         self.control = EgoInput(steering_angle=target_steer, acceleration=0.0)
         self.Motion_model(dt_ms)
 
@@ -436,7 +461,7 @@ class Vehicle:
             state=ego_state,
         )
         dynamic_state = self.dynamic_model.dynamic_state
-        self.yaw_rate = dynamic_state.yaw_rate
+        self.yaw_rate = self.dynamic_model.yaw_rate
         self.beta = math.atan2(dynamic_state.velocity.y, dynamic_state.velocity.x)
         self.viz.update(self.state)
 
@@ -470,13 +495,15 @@ class DynamicBicycleModel:
             0.0,
             ego_state.yaw,
         )
-        #Forward velocity is forced nonnegative, so this model does not drive backward.
-        self.dynamic_state = DynamicState(
+        # Internal velocity is stored in the vehicle/body frame.
+        self.dynamic_state = EgoState(
             pos=Vector2D(x=ego_state.pos.x, y=ego_state.pos.y),
-            yaw=ego_state.yaw,
             velocity=Vector2D(x=max(0.0, vx_body), y=vy_body),
-            yaw_rate=yaw_rate,
+            acceleration=Vector2D(x=0.0, y=0.0),
+            yaw=ego_state.yaw,
+            steering_angle=ego_state.steering_angle,
         )
+        self.yaw_rate = yaw_rate
         self.ego_state = EgoState(
             pos=Vector2D(x=ego_state.pos.x, y=ego_state.pos.y),
             velocity=ego_state.velocity,
@@ -497,12 +524,14 @@ class DynamicBicycleModel:
             ego_state.yaw,
         )
 
-        self.dynamic_state = DynamicState(
+        self.dynamic_state = EgoState(
             pos=Vector2D(x=ego_state.pos.x, y=ego_state.pos.y),
-            yaw=ego_state.yaw,
             velocity=Vector2D(x=max(0.0, vx_body), y=vy_body),
-            yaw_rate=yaw_rate,
+            acceleration=Vector2D(x=0.0, y=0.0),
+            yaw=ego_state.yaw,
+            steering_angle=ego_state.steering_angle,
         )
+        self.yaw_rate = yaw_rate
         self.ego_state = EgoState(
             pos=Vector2D(x=ego_state.pos.x, y=ego_state.pos.y),
             velocity=ego_state.velocity,
@@ -614,7 +643,7 @@ class DynamicBicycleModel:
 
         if speed > 1e-3:
             beta = math.atan2(previous.velocity.y, previous.velocity.x)
-            yaw_rate = previous.yaw_rate
+            yaw_rate = self.yaw_rate
 
             cf = float(self.veh_cfg.Cf)
             cr = float(self.veh_cfg.Cr)
@@ -667,12 +696,14 @@ class DynamicBicycleModel:
         )
         acceleration_global = Vector2D(x=acceleration_x, y=acceleration_y)
 
-        self.dynamic_state = DynamicState(
+        self.dynamic_state = EgoState(
             pos=Vector2D(x=next_x, y=next_y),
-            yaw=next_yaw,
             velocity=Vector2D(x=next_vx, y=next_vy),
-            yaw_rate=next_yaw_rate,
+            acceleration=acceleration_global,
+            yaw=next_yaw,
+            steering_angle=steering_angle,
         )
+        self.yaw_rate = next_yaw_rate
         self.ego_state = EgoState(
             pos=Vector2D(x=next_x, y=next_y),
             velocity=next_velocity_global,
@@ -705,7 +736,7 @@ class DynamicBicycleModel:
 
         vx = previous.velocity.x
         vy = previous.velocity.y
-        yaw_rate = previous.yaw_rate
+        yaw_rate = self.yaw_rate
         slip_vx = max(abs(vx), _MIN_SPEED_FOR_SLIP)
 
         alpha_front = steering_angle - math.atan2(
@@ -777,13 +808,6 @@ class DynamicBicycleModel:
         next_x = previous.pos.x + next_velocity_global.x * dt_sec
         next_y = previous.pos.y + next_velocity_global.y * dt_sec
 
-        self.dynamic_state = DynamicState(
-            pos=Vector2D(x=next_x, y=next_y),
-            yaw=next_yaw,
-            velocity=Vector2D(x=next_vx, y=next_vy),
-            yaw_rate=next_yaw_rate,
-        )
-
         acceleration_x, acceleration_y, _ = global_to_ego_axis(
             dvx - yaw_rate * vy,
             dvy + yaw_rate * vx,
@@ -792,6 +816,15 @@ class DynamicBicycleModel:
             -next_yaw,
         )
         acceleration_global = Vector2D(x=acceleration_x, y=acceleration_y)
+
+        self.dynamic_state = EgoState(
+            pos=Vector2D(x=next_x, y=next_y),
+            velocity=Vector2D(x=next_vx, y=next_vy),
+            acceleration=acceleration_global,
+            yaw=next_yaw,
+            steering_angle=steering_angle,
+        )
+        self.yaw_rate = next_yaw_rate
 
         self.ego_state = EgoState(
             pos=Vector2D(x=next_x, y=next_y),
@@ -803,7 +836,7 @@ class DynamicBicycleModel:
 
         return self.ego_state
 
-    # Role: convert the internal DynamicState back into the public EgoState format.
+    # Role: convert the internal body-frame state back into the public EgoState format.
     def to_ego_state(self, acceleration: Vector2D | None = None) -> EgoState:
         if acceleration is None:
             acceleration = Vector2D(x=0.0, y=0.0)
