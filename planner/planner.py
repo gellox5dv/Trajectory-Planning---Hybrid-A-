@@ -9,9 +9,10 @@ from motion.bicycle import kinematic_bicycle
 import heapq
 import math
 from omegaconf import DictConfig, OmegaConf
+from utils.helper import convert_cfg_to_native
 import time
 
-from utils.helper import get_magnitude
+from utils.helper import get_magnitude, get_signed_magnitude
 from planner.cost.cost import calculate_node_cost, calculate_heuristic_cost, calculate_total_cost
 
 class IDProvider:
@@ -24,7 +25,19 @@ class IDProvider:
         return result
 
 
-def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
+import math
+import time
+import heapq
+from typing import Optional
+
+# (Assuming other imports and models remain the same)
+
+import math
+import time
+import heapq
+from typing import Optional
+
+def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> PlanResult:
     """
     Computes a trajectory using a Hybrid A* search algorithm.
 
@@ -38,24 +51,27 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
                                    the environment, the goal region, and target speed.
         cfg (DictConfig): The Hydra configuration object containing parameters for the 
                           planner, cost weights, motion primitives, and vehicle dynamics.
+        debug (bool): If True, prints detailed performance KPIs and statistics to the console.
 
     Returns:
         PlanResult: An object containing the success flag, the final trajectory (if successful), 
                     the total cost, and a diagnostic status message.
     """
-    
-    # ---------------------------------------------------------
-    # 1. Initialization
-    # ---------------------------------------------------------
+
+    cfg = convert_cfg_to_native(cfg)
+
     open_nodes_pq: list[StateNode] = []
     end_nodes_pq: list[StateNode] = []
     id_provider = IDProvider()
     
-    # Calculate the maximum allowable depth based on horizon and time step
     max_depth = math.ceil(cfg.planner.horizon / cfg.planner.dt_sim)
     call_time = time.perf_counter()
 
-    # Immediate success check: Is the vehicle already inside the goal region?
+    # --- Debug Tracking Variables ---
+    total_generated_nodes = 1  
+    max_depth_reached = 0
+    ttfs_sec: Optional[float] = None
+
     if is_in_goal_region(request.start_state, request.goal_region, cfg.vehicle):
         return PlanResult(
             success=False,
@@ -65,7 +81,6 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
             status_message='Vehicle is already in the goal region at function call.'
         )
 
-    # Initialize the root node of the search tree
     root = StateNode(
         id=id_provider.get_id(),
         state_stamped=request.start_state,
@@ -75,108 +90,83 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
         total_cost=0.0,
         detailed_costs=None,
         goal_region_reached=False,
-         node_depth=0,
+        node_depth=0,
         parent=None
     )
     
-    # Push the root node onto the open priority queue
     heapq.heappush(open_nodes_pq, root)
 
-    # ---------------------------------------------------------
-    # 2. Main A* Search Loop
-    # ---------------------------------------------------------
     while True:
         loop_start_time = time.perf_counter()
 
-        # Terminate if there are no more nodes to explore
         if not open_nodes_pq:
             break
 
-        # Pop the node with the lowest total cost f(n)
         prev_node = heapq.heappop(open_nodes_pq)
         prev_stamped_state = prev_node.state_stamped
 
-        # Generate dynamically feasible motion primitives for the current state
         motion_primitives = get_motion_primitives(
-            velocity=get_magnitude(prev_stamped_state.state.velocity),
+            velocity=get_signed_magnitude(prev_stamped_state.state.velocity, prev_stamped_state.state.yaw),
             steering_angle=prev_stamped_state.state.steering_angle,
             veh_cfg=cfg.vehicle,
             velocity_limit=request.target_speed,
-            acceleration=get_magnitude(prev_stamped_state.state.acceleration),
+            acceleration=get_signed_magnitude(prev_stamped_state.state.acceleration, prev_stamped_state.state.yaw),
             mp_cfg=cfg.motion_primitives,
             internal_dt=cfg.planner.dt_sim
         )
         
-        # Expand the current node using the generated primitives
         for mp in motion_primitives:
+            total_generated_nodes += 1
             
-            # Propagate state using the bicycle model
-            curr_state = kinematic_bicycle(stamped_state=prev_stamped_state, 
-                                           control=EgoInput(mp.steering_angle,mp.acceleration), 
-                                           dt=mp.dt, 
-                                           vehicle_params=cfg.vehicle)
+            curr_state = kinematic_bicycle(
+                stamped_state=prev_stamped_state, 
+                control=EgoInput(mp.steering_angle, mp.acceleration), 
+                dt=mp.dt, 
+                vehicle_params=cfg.vehicle
+            )
             
-            # Accumulated cost up to the start of this new edge
             path_cost = prev_node.path_cost + prev_node.node_cost
 
-            # Calculate transition cost for the current edge (without heuristic)
             node_cost, detailed_costs = calculate_node_cost(
-                prev_state=prev_stamped_state,
-                curr_state=curr_state,
-                request=request,
-                cost_cfg=cfg.cost,
-                veh_cfg=cfg.vehicle
+                prev_state=prev_stamped_state, curr_state=curr_state,
+                request=request, cost_cfg=cfg.cost, veh_cfg=cfg.vehicle
             )
             
-            # Estimate cost from the new state to the goal
             heuristic_cost = calculate_heuristic_cost(
-                state=curr_state,
-                request=request,
-                veh_cfg=cfg.vehicle,
-                mp_cfg=cfg.motion_primitives
+                state=curr_state, request=request, veh_cfg=cfg.vehicle, mp_cfg=cfg.motion_primitives
             )
             
-            # Aggregate total weighted cost f(n) for the priority queue
             total_cost, detailed_costs = calculate_total_cost(
-                path_cost=path_cost, 
-                node_cost=node_cost, 
-                heuristic_cost=heuristic_cost, 
-                detailed_costs=detailed_costs, 
-                cost_cfg=cfg.cost
+                path_cost=path_cost, node_cost=node_cost, heuristic_cost=heuristic_cost, 
+                detailed_costs=detailed_costs, cost_cfg=cfg.cost
             )
 
-            # Check if this new state intersects with the goal region
             goal_region_reached = is_in_goal_region(curr_state, request.goal_region, cfg.vehicle)
+            
+           
 
-            # Create the expanded child node
+            node_depth = prev_node.node_depth + 1
+            max_depth_reached = max(max_depth_reached, node_depth)
+
             new_node = StateNode(
-                id=id_provider.get_id(),
-                state_stamped=curr_state,
-                node_cost=node_cost,
-                heuristic_cost=heuristic_cost,
-                path_cost=path_cost,
-                total_cost=total_cost,
-                detailed_costs=detailed_costs,
-                goal_region_reached=goal_region_reached,
-                node_depth=prev_node.node_depth + 1,
-                parent=prev_node,
-                motion_primitive=mp
+                id=id_provider.get_id(), state_stamped=curr_state,
+                node_cost=node_cost, heuristic_cost=heuristic_cost, path_cost=path_cost,
+                total_cost=total_cost, detailed_costs=detailed_costs,
+                goal_region_reached=goal_region_reached, node_depth=node_depth,
+                parent=prev_node, motion_primitive=mp
             )
             
-            # Sort the node into the appropriate queue based on termination conditions
             if not new_node.goal_region_reached and new_node.node_depth < max_depth:
                 heapq.heappush(open_nodes_pq, new_node)
             else:
-                # Goal reached or max depth exceeded; consider this an end node
                 heapq.heappush(end_nodes_pq, new_node)
+                 # Record Time to First Solution (TTFS)
+                if ttfs_sec is None:
+                    ttfs_sec = time.perf_counter() - call_time
         
-        # ---------------------------------------------------------
-        # 3. Time Budget Evaluation
-        # ---------------------------------------------------------
         loop_stop_time = time.perf_counter()
         loop_duration = loop_stop_time - loop_start_time
 
-        # Check if the compute time budget (in seconds) has been exceeded
         time_elapsed = loop_stop_time - call_time
         time_budget_sec = cfg.planner.max_compute_time / 1000.0
         extract_time_buffer_sec = cfg.planner.extract_path_time / 1000.0
@@ -184,48 +174,65 @@ def plan(request: PlanningRequest, cfg: DictConfig) -> PlanResult:
         if (time_elapsed + loop_duration + extract_time_buffer_sec > time_budget_sec):
             break
 
-    # ---------------------------------------------------------
-    # 4. Trajectory Extraction & Result Construction
-    # ---------------------------------------------------------
+    # --- Result Construction ---
     best_end_node = None
-
-    # Retrieve the best trajectory end point if any were found
     if end_nodes_pq:
         best_end_node = heapq.heappop(end_nodes_pq)
 
-    # A plan is successful if an end node exists and its cost is not infinite (e.g., no hard collisions)
     success = best_end_node is not None and not math.isinf(best_end_node.total_cost)
 
+    path_length_raw = 0
     if success:
-        # Backtrack from the end node to the root to build the trajectory
         path = extract_path_stamped_states(best_end_node)
+        path_length_raw = len(path)
 
-        # Downsample the trajectory to match the requested output resolution
         rescaling_factor = int(cfg.planner.dt_output / cfg.planner.dt_sim)
         path = path[::rescaling_factor]
+        trajectory = Trajectory(states=path)
 
-        return PlanResult(
+        result = PlanResult(
             success=True,
             goal_region_reached=best_end_node.goal_region_reached,
-            trajectory=path,
+            trajectory=trajectory,
             cost=best_end_node.total_cost,
-            status_message=None
+            status_message=None,
+            debug_root_node=root
         )
-    
     else:
-        # Construct detailed failure diagnostics
         status_message = f"End Node reached: {best_end_node is not None}"
         if best_end_node is not None:
             status_message += f" | Node details: {best_end_node.__repr__()}"
 
-        return PlanResult(
+        result = PlanResult(
             success=False,
             goal_region_reached=None,
             trajectory=None,
             cost=None,
-            status_message=status_message
-        )                                 
-                                 
+            status_message=status_message,
+            debug_root_node=root
+        )
+
+    # --- Debug Console Output ---
+    if debug:
+        total_time_ms = (time.perf_counter() - call_time) * 1000.0
+        ms_per_node = total_time_ms / total_generated_nodes if total_generated_nodes > 0 else 0.0
+        efficiency_pct = (path_length_raw / total_generated_nodes) * 100 if total_generated_nodes > 0 else 0.0
+        ttfs_str = f"{(ttfs_sec * 1000.0):.2f} ms" if ttfs_sec is not None else "N/A (Goal not reached)"
+
+        print("\n" + "="*50)
+        print("PLANNER DEBUG STATISTICS")
+        print("="*50)
+        print(f"Time Budget       : {cfg.planner.max_compute_time:.2f} ms")
+        print(f"Compute Time      : {total_time_ms:.2f} ms")
+        print(f"TTFS              : {ttfs_str}")
+        print(f"Speed             : {ms_per_node:.4f} ms / node")
+        print(f"Total Nodes Gen.  : {total_generated_nodes}")
+        print(f"Search Efficiency : {efficiency_pct:.2f} %")
+        print(f"Max Depth Reached : {max_depth_reached} / {max_depth}")
+        print(f"Success           : {success}")
+        print("="*50 + "\n")
+
+    return result          
 
 def extract_path_stamped_states(end_node: StateNode) -> List[EgoStateStamped]:
     node = end_node
