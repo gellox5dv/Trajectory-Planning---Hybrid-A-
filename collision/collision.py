@@ -390,4 +390,3 @@ def get_ego_lane_info(
             best_speed_limit = lane.speed_limit
             
     return best_lane_id, best_dist, best_yaw_offset, occlusion_sum, is_opposite, best_speed_limit
-
