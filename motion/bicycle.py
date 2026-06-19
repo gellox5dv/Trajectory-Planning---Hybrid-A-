@@ -245,6 +245,9 @@ class DynamicBicycleModel:
             'steer': delta,
         }
 
+        ax_body = dvx - r * vy
+        ay_body = dvy + r * vx
+
         # 5. Return updated EgoState
         return EgoState(
             pos=Vector2D(x, y),
@@ -253,8 +256,8 @@ class DynamicBicycleModel:
                 vx * ss + vy * c
             ),
             acceleration=Vector2D(
-                dvx * c - dvy * ss,
-                dvx * ss + dvy * c
+                ax_body * c - ay_body * ss,
+                ax_body * ss + ay_body * c
             ),
             yaw=yaw,
             steering_angle=delta,
