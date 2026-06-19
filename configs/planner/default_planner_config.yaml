@@ -15,9 +15,5 @@ extract_path_time: 5
 # ---------------------------------------------------------
 # Goal Region
 # ---------------------------------------------------------
-<<<<<<< HEAD
 horizon_increment: 0.2    # Increment on the planning horizon for the Goal Region in percent
-=======
-horizon_increment: 20.0    # Increment on the planning horizon for the Goal Region in percent
 goal_region_min_speed: 7.0
->>>>>>> origin/main
