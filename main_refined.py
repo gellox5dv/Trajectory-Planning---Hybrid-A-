@@ -124,13 +124,9 @@ def main(cfg: DictConfig) -> None:
                                            dt = cfg.planner.dt_sim)
             
             # TODO: calculate goal region (dummy arguments used)
-            horizon_increment = float(cfg.planner.horizon_increment)
-            if horizon_increment > 1.0:
-                horizon_increment /= 100.0
-
             goal_region = get_goal_region(curr_ego_state=ego_state_stamped,
                                           lanes=curr_env.lanes,
-                                          horizon=cfg.planner.horizon * horizon_increment,
+                                          horizon=cfg.planner.horizon * cfg.planner.horizon_increment,
                                           length=3.0,
                                           width=3.0) 
             
@@ -219,3 +215,4 @@ def _main(cfg: DictConfig):
             vehicle_params=vehicle_params,
             trajectory=plan_result.trajectory
         )
+        
