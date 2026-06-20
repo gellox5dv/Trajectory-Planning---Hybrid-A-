@@ -10,10 +10,9 @@ if __package__ is None or __package__ == "":
 from models.models import (
     DynamicObject,
     DynamicObjectStamped,
-    EgoState,
+     EgoState,
     EgoStateStamped,
     Environment,
-    ObjectType,
     PredictedEnvironment,
     Vector2D,
 )
@@ -490,14 +489,12 @@ def is_overtake_gap_safe(
     return True
 
 
-# Visual sanity-check for the straight-road overtake prediction scenario.
+# Event-based visualization for the overtake decision.
 def _flatten_predictions(
     predicted_env: PredictedEnvironment,
     object_id: int,
 ) -> tuple["np.ndarray", "np.ndarray", "np.ndarray", "np.ndarray"]:
-    """Return timestamps, x positions, y positions, and x velocities."""
-    import numpy as np
-
+    """Return timestamps, x positions, y positions, and scalar speeds."""
     predictions = sorted(
         predicted_env.objects[object_id],
         key=lambda obj: obj.timestamp,
@@ -505,256 +502,583 @@ def _flatten_predictions(
     timestamps = np.array([obj.timestamp for obj in predictions])
     xs = np.array([obj.state.pos.x for obj in predictions])
     ys = np.array([obj.state.pos.y for obj in predictions])
-    vxs = np.array([obj.state.velocity.x for obj in predictions])
-    return timestamps, xs, ys, vxs
+    speeds = np.array([get_magnitude(obj.state.velocity) for obj in predictions])
+    return timestamps, xs, ys, speeds
 
 
-def visualize_prediction(
-    output_path: str = "prediction_visualization.png",
-    show: bool = True,
-) -> None:
+def _to_ego_frame(
+    x: float,
+    y: float,
+    ego_state: EgoStateStamped,
+) -> tuple[float, float]:
+    """Convert one global point into the decision ego frame."""
+    local_x, local_y, _ = global_to_ego_axis(
+        x,
+        y,
+        ego_state.state.pos.x,
+        ego_state.state.pos.y,
+        ego_state.state.yaw,
+    )
+    return local_x, local_y
+
+
+def _arrays_to_ego_frame(
+    xs: "np.ndarray",
+    ys: "np.ndarray",
+    ego_state: EgoStateStamped,
+) -> tuple["np.ndarray", "np.ndarray"]:
+    """Convert arrays of global points into the decision ego frame."""
+    local_points = [_to_ego_frame(float(x), float(y), ego_state) for x, y in zip(xs, ys)]
+    if not local_points:
+        return np.array([]), np.array([])
+    local_xs, local_ys = zip(*local_points)
+    return np.array(local_xs), np.array(local_ys)
+
+
+def _load_prediction_visualization_cfg(config_overrides: Optional[List[str]] = None):
+    """Load the project config exactly like the simulation stack does."""
+    from hydra import compose, initialize_config_dir
+    from hydra.core.global_hydra import GlobalHydra
+
+    config_dir = Path(__file__).resolve().parents[1] / "configs"
+    if GlobalHydra.instance().is_initialized():
+        GlobalHydra.instance().clear()
+
+    with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
+        return compose(
+            config_name="config",
+            overrides=list(config_overrides or []),
+        )
+
+
+def _ceil_ms_to_step(time_ms: float, dt: int) -> int:
+    """Round a millisecond timestamp up to the next prediction grid step."""
+    return int(math.ceil(time_ms / dt) * dt)
+
+
+def _lead_braking_acceleration(cfg) -> float:
+    """Return the configured braking acceleration as a negative scalar."""
+    deceleration = float(cfg.vehicle.max_deceleration)
+    return deceleration if deceleration < 0.0 else -deceleration
+
+
+def _longitudinal_acceleration(obj: DynamicObjectStamped) -> float:
+    """Project an object's acceleration onto its heading direction."""
+    return get_signed_magnitude(obj.state.acceleration, obj.state.yaw)
+
+
+def _estimate_stop_time_ms(
+    obj: DynamicObjectStamped,
+    braking_acceleration: float,
+) -> Optional[int]:
+    """Estimate when an object will stop under constant longitudinal braking."""
+    speed = get_signed_magnitude(obj.state.velocity, obj.state.yaw)
+    if speed <= 0.0 or braking_acceleration >= 0.0:
+        return None
+    return int(math.ceil(1000.0 * speed / abs(braking_acceleration)))
+
+
+def _estimate_oncoming_clear_time_ms(
+    ego_state: EgoStateStamped,
+    oncoming: DynamicObjectStamped,
+    safety_distance: float,
+) -> Optional[int]:
+    """Estimate when the oncoming car clears ego by safety_distance."""
+    heading_x = math.cos(oncoming.state.yaw)
+    heading_y = math.sin(oncoming.state.yaw)
+    rel_pos = Vector2D(
+        x=oncoming.state.pos.x - ego_state.state.pos.x,
+        y=oncoming.state.pos.y - ego_state.state.pos.y,
+    )
+    signed_clearance_now = get_signed_magnitude(rel_pos, oncoming.state.yaw)
+    rel_velocity_x = oncoming.state.velocity.x - ego_state.state.velocity.x
+    rel_velocity_y = oncoming.state.velocity.y - ego_state.state.velocity.y
+    clearance_rate = rel_velocity_x * heading_x + rel_velocity_y * heading_y
+
+    if signed_clearance_now >= safety_distance:
+        return 0
+    if clearance_rate <= 1e-6:
+        return None
+
+    return int(
+        math.ceil(
+            1000.0 * (safety_distance - signed_clearance_now) / clearance_rate
+        )
+    )
+
+
+def _object_with_state(
+    obj: DynamicObjectStamped,
+    timestamp: int,
+    pos: Vector2D,
+    velocity: Vector2D,
+    acceleration: Vector2D,
+) -> DynamicObjectStamped:
+    """Copy object metadata while replacing motion state."""
+    return DynamicObjectStamped(
+        timestamp=timestamp,
+        state=DynamicObject(
+            id=obj.state.id,
+            obj_class=obj.state.obj_class,
+            pos=pos,
+            yaw=obj.state.yaw,
+            velocity=velocity,
+            acceleration=acceleration,
+            width=obj.state.width,
+            length=obj.state.length,
+        ),
+    )
+
+
+def _ego_at_decision(
+    ego_state: EgoStateStamped,
+    decision_timestamp: int,
+) -> EgoStateStamped:
     """
-    Visualize the lead-car stop and oncoming-traffic wait decision.
+    Advance ego to the decision moment, then make it wait.
 
-    The scenario uses only the constant-acceleration predictor:
-      - ego starts behind the lead vehicle
-      - the lead vehicle brakes to zero speed
-      - the oncoming vehicle moves straight in the opposite lane
-      - the lower plot shows when the signed clearance becomes safe
+    This models the workflow under test: ego follows the lead vehicle, reaches
+    the stopped-lead decision point, and waits before overtaking.
     """
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    prediction_horizon_ms = 6000
-    dt_ms = 200
-    safety_distance_m = 15.0
-
-    ego_state_t0 = EgoStateStamped(
-        timestamp=0,
+    time_s = (decision_timestamp - ego_state.timestamp) / 1000.0
+    pos, _ = _predict_constant_acceleration_step(
+        position=ego_state.state.pos,
+        velocity=ego_state.state.velocity,
+        acceleration=ego_state.state.acceleration,
+        time_s=time_s,
+    )
+    return EgoStateStamped(
+        timestamp=decision_timestamp,
         state=EgoState(
-            pos=Vector2D(x=0.0, y=0.0),
-            velocity=Vector2D(x=8.0, y=0.0),
+            pos=pos,
+            velocity=Vector2D(x=0.0, y=0.0),
             acceleration=Vector2D(x=0.0, y=0.0),
-            yaw=0.0,
+            yaw=ego_state.state.yaw,
             steering_angle=0.0,
         ),
     )
 
-    lead_vehicle = DynamicObjectStamped(
-        timestamp=0,
-        state=DynamicObject(
-            id=1,
-            obj_class=ObjectType.VEHICLE,
-            pos=Vector2D(x=20.0, y=0.0),
-            yaw=0.0,
-            velocity=Vector2D(x=8.0, y=0.0),
-            acceleration=Vector2D(x=-2.0, y=0.0),
-            width=1.8,
-            length=4.5,
-        ),
-    )
 
-    oncoming_vehicle = DynamicObjectStamped(
-        timestamp=0,
-        state=DynamicObject(
-            id=2,
-            obj_class=ObjectType.VEHICLE,
-            pos=Vector2D(x=80.0, y=3.5),
-            yaw=np.pi,
-            velocity=Vector2D(x=-12.0, y=0.0),
-            acceleration=Vector2D(x=0.0, y=0.0),
-            width=1.8,
-            length=4.5,
-        ),
-    )
-
-    environment = Environment(objects=[lead_vehicle, oncoming_vehicle], lanes=[])
-    predicted_env = predict_environment(
-        environment,
-        prediction_horizon=prediction_horizon_ms,
-        dt=dt_ms,
-        model="constant_acceleration",
-    )
-
-    lead_obj = find_lead_vehicle(environment, ego_state_t0)
-    oncoming_obj = find_oncoming_vehicle(environment, ego_state_t0)
-    print(f"find_lead_vehicle found id: {lead_obj.state.id if lead_obj else None}")
-    print(
-        "find_oncoming_vehicle found id: "
-        f"{oncoming_obj.state.id if oncoming_obj else None}"
-    )
-
-    lead_id = lead_obj.state.id if lead_obj else lead_vehicle.state.id
-    oncoming_id = (
-        oncoming_obj.state.id if oncoming_obj else oncoming_vehicle.state.id
-    )
-
-    ego_trajectory: List[EgoStateStamped] = []
-    for timestamp in range(0, prediction_horizon_ms + dt_ms, dt_ms):
+def _ego_replay_trajectory(
+    ego_state: EgoStateStamped,
+    replay_horizon: int,
+    dt: int,
+) -> List[EgoStateStamped]:
+    """Replay ego before the lead-stop decision using the current ego state."""
+    replay_states = []
+    for timestamp in range(0, replay_horizon + dt, dt):
         time_s = timestamp / 1000.0
-        ego_trajectory.append(
+        pos, velocity = _predict_constant_acceleration_step(
+            position=ego_state.state.pos,
+            velocity=ego_state.state.velocity,
+            acceleration=ego_state.state.acceleration,
+            time_s=time_s,
+        )
+        replay_states.append(
             EgoStateStamped(
-                timestamp=timestamp,
+                timestamp=ego_state.timestamp + timestamp,
                 state=EgoState(
-                    pos=Vector2D(
-                        x=ego_state_t0.state.velocity.x * time_s,
-                        y=0.0,
-                    ),
-                    velocity=ego_state_t0.state.velocity,
-                    acceleration=Vector2D(x=0.0, y=0.0),
-                    yaw=0.0,
-                    steering_angle=0.0,
+                    pos=pos,
+                    velocity=velocity,
+                    acceleration=ego_state.state.acceleration,
+                    yaw=ego_state.state.yaw,
+                    steering_angle=ego_state.state.steering_angle,
                 ),
             )
         )
+    return replay_states
 
-    gap_is_safe = is_overtake_gap_safe(
-        predicted_environment=predicted_env,
-        ego_trajectory=ego_trajectory,
-        lead_vehicle_id=lead_id,
-        overtake_start_ms=0,
-        overtake_duration_ms=prediction_horizon_ms,
-        safety_distance=safety_distance_m,
+
+def _waiting_ego_trajectory(
+    ego_state: EgoStateStamped,
+    prediction_horizon: int,
+    dt: int,
+) -> List[EgoStateStamped]:
+    """Build a waiting ego trajectory from the stopped-lead decision moment."""
+    return [
+        EgoStateStamped(
+            timestamp=ego_state.timestamp + timestamp,
+            state=EgoState(
+                pos=ego_state.state.pos,
+                velocity=Vector2D(x=0.0, y=0.0),
+                acceleration=Vector2D(x=0.0, y=0.0),
+                yaw=ego_state.state.yaw,
+                steering_angle=ego_state.state.steering_angle,
+            ),
+        )
+        for timestamp in range(0, prediction_horizon + dt, dt)
+    ]
+
+
+def _decision_environment_at_lead_stop(
+    environment: Environment,
+    ego_state: EgoStateStamped,
+    cfg,
+    dt: int,
+) -> tuple[Environment, EgoStateStamped, PredictedEnvironment, List[EgoStateStamped], int, int]:
+    """Replay current stack data to the moment the lead vehicle stops."""
+    lead = find_lead_vehicle(environment, ego_state)
+    if lead is None:
+        raise ValueError("Cannot build overtake replay: no lead vehicle found.")
+
+    braking_acceleration = _lead_braking_acceleration(cfg)
+    current_acceleration = _longitudinal_acceleration(lead)
+    if current_acceleration < -1e-6:
+        braking_acceleration = current_acceleration
+
+    lead_stop_estimate_ms = _estimate_stop_time_ms(lead, braking_acceleration)
+    if lead_stop_estimate_ms is None:
+        raise ValueError("Cannot build overtake replay: lead vehicle is not braking to a stop.")
+
+    decision_offset_ms = _ceil_ms_to_step(lead_stop_estimate_ms, dt)
+    replay_accelerations: Dict[int, Vector2D | float] = {
+        obj.state.id: obj.state.acceleration for obj in environment.objects
+    }
+    replay_accelerations[lead.state.id] = braking_acceleration
+
+    replay_prediction = predict_environment(
+        environment=environment,
+        prediction_horizon=decision_offset_ms,
+        dt=dt,
+        model="constant_acceleration",
+        accelerations=replay_accelerations,
     )
-    print(f"is_overtake_gap_safe over full horizon: {gap_is_safe}")
+    decision_timestamp = ego_state.timestamp + decision_offset_ms
+    decision_objects = objects_at_time(replay_prediction, decision_timestamp)
+    if not decision_objects:
+        raise ValueError("Cannot build overtake replay: no objects at decision timestamp.")
 
-    lead_ts, lead_xs, lead_ys, lead_vxs = _flatten_predictions(
-        predicted_env,
-        lead_id,
+    stopped_objects = []
+    for obj in decision_objects:
+        acceleration = Vector2D(x=0.0, y=0.0)
+        velocity = obj.state.velocity
+        if obj.state.id == lead.state.id:
+            velocity = Vector2D(x=0.0, y=0.0)
+        stopped_objects.append(
+            _object_with_state(
+                obj=obj,
+                timestamp=decision_timestamp,
+                pos=obj.state.pos,
+                velocity=velocity,
+                acceleration=acceleration,
+            )
+        )
+
+    decision_environment = Environment(objects=stopped_objects, lanes=environment.lanes)
+    decision_ego = _ego_at_decision(ego_state, decision_timestamp)
+    ego_replay = _ego_replay_trajectory(
+        ego_state=ego_state,
+        replay_horizon=decision_offset_ms,
+        dt=dt,
     )
-    oncoming_ts, oncoming_xs, oncoming_ys, _ = _flatten_predictions(
-        predicted_env,
-        oncoming_id,
+    return (
+        decision_environment,
+        decision_ego,
+        replay_prediction,
+        ego_replay,
+        decision_offset_ms,
+        lead_stop_estimate_ms,
     )
-    ego_xs = np.array([state.state.pos.x for state in ego_trajectory])
-    ego_ys = np.array([state.state.pos.y for state in ego_trajectory])
 
-    stopped_mask = np.isclose(lead_vxs, 0.0, atol=1e-6)
-    lead_stop_time_ms = int(lead_ts[stopped_mask][0]) if stopped_mask.any() else None
 
-    signed_clearance = np.array(
-        [
+def _clearance_series(
+    predicted_env: PredictedEnvironment,
+    ego_trajectory: List[EgoStateStamped],
+    oncoming_id: int,
+) -> tuple["np.ndarray", "np.ndarray"]:
+    """Return time since decision and signed ego-to-oncoming clearance."""
+    oncoming_predictions = {
+        obj.timestamp: obj
+        for obj in predicted_env.objects.get(oncoming_id, [])
+    }
+    times = []
+    clearances = []
+    start_timestamp = ego_trajectory[0].timestamp
+    for ego_at_t in ego_trajectory:
+        oncoming_at_t = oncoming_predictions.get(ego_at_t.timestamp)
+        if oncoming_at_t is None:
+            continue
+        times.append(ego_at_t.timestamp - start_timestamp)
+        clearances.append(
             get_signed_magnitude(
                 Vector2D(
-                    x=oncoming_x - ego_x,
-                    y=oncoming_y - ego_y,
+                    x=oncoming_at_t.state.pos.x - ego_at_t.state.pos.x,
+                    y=oncoming_at_t.state.pos.y - ego_at_t.state.pos.y,
                 ),
-                oncoming_vehicle.state.yaw,
+                oncoming_at_t.state.yaw,
             )
-            for oncoming_x, oncoming_y, ego_x, ego_y in zip(
-                oncoming_xs,
-                oncoming_ys,
-                ego_xs,
-                ego_ys,
-            )
-        ]
+        )
+    return np.array(times), np.array(clearances)
+
+
+def _lane_y_offsets(
+    environment: Environment,
+    ego_state: EgoStateStamped,
+) -> List[tuple[int, float]]:
+    """Return lane centerline y offsets relative to the decision ego frame."""
+    lane_offsets = []
+    for lane in environment.lanes:
+        if not lane.centerline:
+            continue
+        nearest_point = min(
+            (point for point, _ in lane.centerline),
+            key=lambda point: math.hypot(
+                point.x - ego_state.state.pos.x,
+                point.y - ego_state.state.pos.y,
+            ),
+        )
+        _, local_y = _to_ego_frame(nearest_point.x, nearest_point.y, ego_state)
+        lane_offsets.append((lane.id, local_y))
+    return lane_offsets
+
+
+def visualize_overtake_decision_replay(
+    output_path: str = "prediction_visualization.png",
+    show: bool = True,
+    config_overrides: Optional[List[str]] = None,
+) -> None:
+    """
+    Event-based verification plot for the overtake decision.
+
+    The current scenario is replayed until the lead vehicle stops. From that
+    decision moment, ego waits behind the lead vehicle while prediction checks
+    when the oncoming vehicle has passed far enough for overtaking.
+    """
+    import matplotlib.pyplot as plt
+    from simulation.simulate import Simulation
+
+    cfg = _load_prediction_visualization_cfg(
+        config_overrides or ["scenario=overtake_scenario"]
     )
-    unsafe_mask = signed_clearance < safety_distance_m
-    clear_indices = np.flatnonzero(~unsafe_mask)
-    oncoming_clear_time_ms = (
-        int(oncoming_ts[clear_indices[0]]) if len(clear_indices) else None
+    simulation = Simulation(cfg)
+    initial_environment = simulation.get_environment(noise_level=0.0)
+    initial_ego = simulation.get_ego_state(noise_level=0.0)
+    dt = int(cfg.planner.dt_sim)
+    safety_distance = 15.0
+
+    (
+        decision_environment,
+        decision_ego,
+        replay_prediction,
+        ego_replay,
+        decision_offset_ms,
+        lead_stop_estimate_ms,
+    ) = _decision_environment_at_lead_stop(
+        environment=initial_environment,
+        ego_state=initial_ego,
+        cfg=cfg,
+        dt=dt,
     )
 
-    fig, (ax_top, ax_gap) = plt.subplots(
+    lead = find_lead_vehicle(decision_environment, decision_ego)
+    oncoming = find_oncoming_vehicle(
+        decision_environment,
+        decision_ego,
+        opposite_lane_y_tolerance=5.0,
+        max_lookahead_m=float("inf"),
+    )
+    if lead is None:
+        raise ValueError("Cannot evaluate overtake decision: no stopped lead vehicle found.")
+    if oncoming is None:
+        raise ValueError("Cannot evaluate overtake decision: no oncoming vehicle found.")
+
+    oncoming_clear_estimate_ms = _estimate_oncoming_clear_time_ms(
+        decision_ego,
+        oncoming,
+        safety_distance,
+    )
+    if oncoming_clear_estimate_ms is None:
+        prediction_horizon = int(cfg.planner.horizon)
+    else:
+        prediction_horizon = _ceil_ms_to_step(oncoming_clear_estimate_ms + 5000, dt)
+
+    decision_prediction = predict_environment(
+        environment=decision_environment,
+        prediction_horizon=prediction_horizon,
+        dt=dt,
+        model="constant_acceleration",
+        accelerations={
+            obj.state.id: Vector2D(x=0.0, y=0.0)
+            for obj in decision_environment.objects
+        },
+    )
+    waiting_ego = _waiting_ego_trajectory(decision_ego, prediction_horizon, dt)
+
+    overtake_now_safe = is_overtake_gap_safe(
+        predicted_environment=decision_prediction,
+        ego_trajectory=waiting_ego,
+        lead_vehicle_id=lead.state.id,
+        overtake_start_ms=decision_ego.timestamp,
+        overtake_duration_ms=prediction_horizon,
+        safety_distance=safety_distance,
+    )
+
+    clearance_ts, signed_clearance = _clearance_series(
+        decision_prediction,
+        waiting_ego,
+        oncoming.state.id,
+    )
+    unsafe_mask = signed_clearance < safety_distance
+    clear_indices = np.flatnonzero(~unsafe_mask)
+    oncoming_clear_time_ms = int(clearance_ts[clear_indices[0]]) if len(clear_indices) else None
+
+    fig, (ax_scene, ax_gap) = plt.subplots(
         2,
         1,
-        figsize=(10, 10),
-        height_ratios=[1.4, 1],
+        figsize=(11, 9),
+        height_ratios=[1.0, 1.25],
     )
 
-    color_map = plt.cm.viridis
-    norm = plt.Normalize(vmin=0, vmax=prediction_horizon_ms)
+    for lane_id, lane_y in _lane_y_offsets(decision_environment, decision_ego):
+        ax_scene.axhline(
+            lane_y,
+            color="#b8b8b8",
+            linestyle="--",
+            linewidth=1.0,
+            label=f"Lane {lane_id}",
+            zorder=1,
+        )
 
-    ax_top.plot(
-        ego_xs,
-        ego_ys,
+    ego_replay_xs = np.array([state.state.pos.x for state in ego_replay])
+    ego_replay_ys = np.array([state.state.pos.y for state in ego_replay])
+    ego_replay_rel_xs, ego_replay_rel_ys = _arrays_to_ego_frame(
+        ego_replay_xs,
+        ego_replay_ys,
+        decision_ego,
+    )
+    ax_scene.plot(
+        ego_replay_rel_xs,
+        ego_replay_rel_ys,
         color="black",
         linewidth=2,
-        label="Ego path",
+        label="Ego before lead stops",
         zorder=3,
     )
-    ax_top.scatter(ego_xs, ego_ys, c="black", s=20, zorder=4)
+    ax_scene.scatter(
+        ego_replay_rel_xs,
+        ego_replay_rel_ys,
+        c="black",
+        s=22,
+        zorder=4,
+    )
+    ax_scene.scatter([0.0], [0.0], c="black", s=80, label="Ego waiting", zorder=5)
 
-    ax_top.scatter(
-        lead_xs,
-        lead_ys,
-        c=lead_ts,
-        cmap=color_map,
-        norm=norm,
-        s=60,
+    lead_x, lead_y = _to_ego_frame(lead.state.pos.x, lead.state.pos.y, decision_ego)
+    lead_replay_ts, lead_replay_xs, lead_replay_ys, _ = _flatten_predictions(
+        replay_prediction,
+        lead.state.id,
+    )
+    lead_replay_rel_xs, lead_replay_rel_ys = _arrays_to_ego_frame(
+        lead_replay_xs,
+        lead_replay_ys,
+        decision_ego,
+    )
+    ax_scene.plot(
+        lead_replay_rel_xs,
+        lead_replay_rel_ys,
+        color="tab:purple",
+        linewidth=1.5,
+        alpha=0.8,
+        label="Lead braking history",
+        zorder=2,
+    )
+    ax_scene.scatter(
+        lead_replay_rel_xs,
+        lead_replay_rel_ys,
+        c=lead_replay_ts - initial_ego.timestamp,
+        cmap=plt.cm.plasma,
         marker="s",
+        s=55,
         edgecolors="black",
-        linewidths=0.5,
-        label="Lead vehicle braking to stop",
+        linewidths=0.4,
         zorder=3,
     )
-    oncoming_scatter = ax_top.scatter(
+    ax_scene.scatter(
+        [lead_x],
+        [lead_y],
+        c="tab:purple",
+        marker="s",
+        s=100,
+        label="Lead stopped",
+        zorder=4,
+    )
+
+    oncoming_ts, oncoming_xs, oncoming_ys, _ = _flatten_predictions(
+        decision_prediction,
+        oncoming.state.id,
+    )
+    oncoming_rel_xs, oncoming_rel_ys = _arrays_to_ego_frame(
         oncoming_xs,
         oncoming_ys,
-        c=oncoming_ts,
-        cmap=color_map,
-        norm=norm,
-        s=60,
+        decision_ego,
+    )
+    local_mask = (-150.0 <= oncoming_rel_xs) & (oncoming_rel_xs <= 220.0)
+    oncoming_scatter = ax_scene.scatter(
+        oncoming_rel_xs[local_mask],
+        oncoming_rel_ys[local_mask],
+        c=oncoming_ts[local_mask] - decision_ego.timestamp,
+        cmap=plt.cm.viridis,
+        s=80,
         marker="^",
         edgecolors="black",
         linewidths=0.5,
-        label="Oncoming vehicle constant velocity",
+        label="Oncoming prediction near ego",
         zorder=3,
     )
+    color_bar = fig.colorbar(oncoming_scatter, ax=ax_scene, pad=0.01)
+    color_bar.set_label("Time after lead stop [ms]")
 
-    if lead_stop_time_ms is not None:
-        stop_x = lead_xs[lead_ts == lead_stop_time_ms][0]
-        stop_y = lead_ys[lead_ts == lead_stop_time_ms][0]
-        ax_top.scatter(
-            [stop_x],
-            [stop_y],
-            facecolors="none",
-            edgecolors="red",
-            s=200,
-            linewidths=2,
-            zorder=5,
-            label=f"Lead stopped at {lead_stop_time_ms} ms",
-        )
-
-    ax_top.set_xlabel("x [m]")
-    ax_top.set_ylabel("y [m]")
-    ax_top.set_title("Predicted trajectories: color encodes prediction time")
-    ax_top.legend(loc="upper left", fontsize=8)
-    ax_top.set_aspect("equal", adjustable="datalim")
-    ax_top.grid(True, alpha=0.3)
-
-    color_bar = fig.colorbar(oncoming_scatter, ax=ax_top, pad=0.01)
-    color_bar.set_label("Prediction time [ms]")
+    decision_label = "WAIT" if not overtake_now_safe else "OVERTAKE"
+    ax_scene.text(
+        0.02,
+        0.95,
+        (
+            f"Lead stop replay: {decision_offset_ms} ms "
+            f"(estimate {lead_stop_estimate_ms} ms)\n"
+            f"Initial gap: {lead_replay_rel_xs[0] - ego_replay_rel_xs[0]:.1f} m\n"
+            f"Decision at lead stop: {decision_label}\n"
+            f"Oncoming clear: {oncoming_clear_time_ms} ms after decision"
+        ),
+        transform=ax_scene.transAxes,
+        va="top",
+        bbox={"facecolor": "white", "alpha": 0.85, "edgecolor": "#cccccc"},
+    )
+    ax_scene.set_xlim(-150.0, 220.0)
+    ax_scene.set_ylim(-4.0, 8.0)
+    ax_scene.set_xlabel("x relative to waiting ego [m]")
+    ax_scene.set_ylabel("y relative to waiting ego [m]")
+    ax_scene.set_title("Decision replay: lead stopped, ego waits, oncoming passes")
+    ax_scene.legend(loc="upper right", fontsize=8)
+    ax_scene.grid(True, alpha=0.3)
 
     ax_gap.plot(
-        oncoming_ts,
+        clearance_ts,
         signed_clearance,
         color="tab:red",
         linewidth=2,
         label="Signed ego-to-oncoming clearance",
     )
     ax_gap.axhline(
-        safety_distance_m,
+        safety_distance,
         color="black",
         linestyle="--",
-        label=f"Safety distance ({safety_distance_m} m)",
+        label=f"Safety distance ({safety_distance} m)",
     )
     ax_gap.fill_between(
-        oncoming_ts,
+        clearance_ts,
         signed_clearance,
-        safety_distance_m,
+        safety_distance,
         where=unsafe_mask,
         color="red",
         alpha=0.25,
         label="Unsafe to overtake",
     )
-    if lead_stop_time_ms is not None:
-        ax_gap.axvline(
-            lead_stop_time_ms,
-            color="tab:blue",
-            linestyle=":",
-            label=f"Lead stops ({lead_stop_time_ms} ms)",
-        )
+    ax_gap.axvline(
+        0,
+        color="tab:blue",
+        linestyle=":",
+        label="Lead stopped / decision point",
+    )
     if oncoming_clear_time_ms is not None:
         ax_gap.axvline(
             oncoming_clear_time_ms,
@@ -762,11 +1086,10 @@ def visualize_prediction(
             linestyle=":",
             label=f"Oncoming clear ({oncoming_clear_time_ms} ms)",
         )
-
-    ax_gap.set_xlabel("Time [ms]")
+    ax_gap.set_xlabel("Time after lead stop [ms]")
     ax_gap.set_ylabel("Signed clearance [m]")
     ax_gap.set_title(
-        f"Overtake gap safety over time: is_overtake_gap_safe = {gap_is_safe}"
+        f"Overtake decision after lead stops: safe now = {overtake_now_safe}"
     )
     ax_gap.legend(loc="best", fontsize=8)
     ax_gap.grid(True, alpha=0.3)
@@ -779,5 +1102,18 @@ def visualize_prediction(
         plt.close(fig)
 
 
+def visualize_prediction(
+    output_path: str = "prediction_visualization.png",
+    show: bool = True,
+    config_overrides: Optional[List[str]] = None,
+) -> None:
+    """Backward-compatible entry point for the overtake decision replay."""
+    visualize_overtake_decision_replay(
+        output_path=output_path,
+        show=show,
+        config_overrides=config_overrides,
+    )
+
+
 if __name__ == "__main__":
-    visualize_prediction()
+    visualize_overtake_decision_replay(config_overrides=["scenario=overtake_scenario"])
