@@ -33,7 +33,7 @@ def main(cfg: DictConfig) -> None:
     newest_trajectory = None
     
     # Timing constants for the simulation loop
-    SIM_STEP_MS = 100
+    SIM_STEP_MS = 20
     PLAN_EXECUTION_MS = 4000
     MAX_SIM_STEPS = int(PLAN_EXECUTION_MS / SIM_STEP_MS)
 
@@ -159,8 +159,7 @@ def main(cfg: DictConfig) -> None:
             
             if sleep_duration > 0:
                 time.sleep(sleep_duration)
-            else:
-                print(f"Warning: Compute too slow for real-time tracking (overtime: {-sleep_duration:.4f}s)")
+           
                 
             step_counter += 1
 
