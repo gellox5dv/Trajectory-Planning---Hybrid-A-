@@ -44,9 +44,8 @@ def visualize_search_tree(
         return
 
     # -------------------------------------------------------------------------
-    # 1. Data extraction of nodes and velocity vectors
+    # 1. Data extraction of nodes
     # -------------------------------------------------------------------------
-    # We flatten the tree structure into dictionary arrays for the Bokeh ColumnDataSource
     nodes_data = {
         'id': [], 'x': [], 'y': [], 'timestamp': [], 'cost': [], 'cost_str': [], 
         'fill_alpha': [], 'line_alpha': [], 'line_width': [], 'size': [], 
@@ -54,15 +53,12 @@ def visualize_search_tree(
         'ego_box_xs': [], 'ego_box_ys': [], 'vec_x0': [], 'vec_y0': [], 'vec_x1': [], 'vec_y1': []
     }
     edges_data = {'xs': [], 'ys': []}
-    vec_map = {}
     
     stack = [plan_result.debug_root_node]
     timestamps_set = set()
     max_cost = 0.0
 
-    # Base timestamp of the simulation step
     t0 = plan_result.debug_root_node.state_stamped.timestamp
-    # Distance from the rear axle to the geometric center for accurate bounding box drawing
     ego_center_offset = vehicle_cfg.length / 2.0 - vehicle_cfg.rear_to_wheel
     
     while stack:
@@ -70,9 +66,6 @@ def visualize_search_tree(
         state = node.state_stamped.state
         ts = node.state_stamped.timestamp
 
-        # Separate infinite costs: 
-        # NaN is required so the ColorMapper renders it as white instead of crashing.
-        # "inf" is a string representation for the UI tooltips.
         raw_cost = node.total_cost
         if math.isinf(raw_cost) or math.isnan(raw_cost):
             safe_cost = float('nan') 
@@ -85,7 +78,6 @@ def visualize_search_tree(
 
         timestamps_set.add(ts)
         
-        # Format the detailed hover string containing kinematics and motion primitives
         details = f"Node ID: {node.id}\n"
         details += f"Timestamp: {ts} ms\n"
         details += f"Total Cost: {display_cost}\n"
@@ -118,12 +110,10 @@ def visualize_search_tree(
         else:
             details += "Costs: N/A"
 
-        # Calculate the geometric center for this specific node to draw the bounding box correctly
         cx = state.pos.x + ego_center_offset * math.cos(state.yaw)
         cy = state.pos.y + ego_center_offset * math.sin(state.yaw)
         b_xs, b_ys = _get_bbox_corners(cx, cy, state.yaw, vehicle_cfg.length, vehicle_cfg.width)
 
-        # Append basic node data
         nodes_data['id'].append(node.id)
         nodes_data['x'].append(state.pos.x)
         nodes_data['y'].append(state.pos.y)
@@ -132,17 +122,15 @@ def visualize_search_tree(
         nodes_data['cost_str'].append(display_cost) 
         nodes_data['details_str'].append(details)
         
-        # Store pre-calculated geometric data for JavaScript highlighting (drawn instantly on click)
         nodes_data['ego_box_xs'].append(b_xs)
         nodes_data['ego_box_ys'].append(b_ys)
         
-        vec_scale = 1.0 
+        vec_scale = 0.5 
         nodes_data['vec_x0'].append(state.pos.x)
         nodes_data['vec_y0'].append(state.pos.y)
         nodes_data['vec_x1'].append(state.pos.x + state.velocity.x * vec_scale)
         nodes_data['vec_y1'].append(state.pos.y + state.velocity.y * vec_scale)
         
-        # Store parent information to draw edges (connections) between nodes
         if node.parent is not None:
             px = node.parent.state_stamped.state.pos.x
             py = node.parent.state_stamped.state.pos.y
@@ -161,7 +149,6 @@ def visualize_search_tree(
             nodes_data['parent_id'].append(-1)
             nodes_data['parent_dist'].append(float('nan'))
         
-        # Initial highlighting: Only the nodes at t0 are fully visible and clickable initially
         if ts == t0:
             nodes_data['fill_alpha'].append(1.0)
             nodes_data['line_alpha'].append(1.0)
@@ -172,14 +159,6 @@ def visualize_search_tree(
             nodes_data['line_alpha'].append(0.2)
             nodes_data['line_width'].append(0.5)
             nodes_data['size'].append(6)
-
-        # Store velocity vectors for the global time-step view (grouped by timestamp)
-        if ts not in vec_map:
-            vec_map[ts] = {'x0': [], 'y0': [], 'x1': [], 'y1': []}
-        vec_map[ts]['x0'].append(state.pos.x)
-        vec_map[ts]['y0'].append(state.pos.y)
-        vec_map[ts]['x1'].append(state.pos.x + state.velocity.x * vec_scale)
-        vec_map[ts]['y1'].append(state.pos.y + state.velocity.y * vec_scale)
 
         stack.extend(node.children)
 
@@ -193,7 +172,6 @@ def visualize_search_tree(
     obj_t0_data = {'xs': [], 'ys': [], 'cx': [], 'cy': [], 'text': []}
     obj_pred_map = {} 
 
-    # Process object predictions and map them to their corresponding timestamps
     for obj_list in pred_env.objects.values():
         for obj_stamped in obj_list:
             ts = obj_stamped.timestamp
@@ -219,7 +197,6 @@ def visualize_search_tree(
     lane_bounds_xs, lane_bounds_ys = [], []
     lane_center_xs, lane_center_ys = [], []
     
-    # Calculate lane boundaries using the normal vector perpendicular to the centerline
     if hasattr(pred_env, 'lanes') and pred_env.lanes:
         for lane in pred_env.lanes:
             cx, cy = [], []
@@ -244,7 +221,6 @@ def visualize_search_tree(
             lane_bounds_xs.append(rx)
             lane_bounds_ys.append(ry)
 
-    # Calculate the corner points of the goal region polygon
     gx, gy = _get_bbox_corners(goal_region.center.x, goal_region.center.y, goal_region.yaw, goal_region.length, goal_region.width)
 
     # -------------------------------------------------------------------------
@@ -262,11 +238,9 @@ def visualize_search_tree(
         active_scroll="wheel_zoom"
     )
 
-    # Draw lane boundaries and centerlines
     p.multi_line(lane_bounds_xs, lane_bounds_ys, color="dimgray", line_width=2, legend_label="Lane Boundaries")
     p.multi_line(lane_center_xs, lane_center_ys, color="silver", line_width=1, line_dash="dashed", legend_label="Centerlines")
 
-    # Draw the goal region and its text label
     p.patch(gx, gy, color="limegreen", alpha=0.3, line_color="darkgreen", line_width=2, legend_label="Goal Region")
     goal_label = Label(
         x=goal_region.center.x, y=goal_region.center.y, text="Goal Region",
@@ -275,15 +249,12 @@ def visualize_search_tree(
     )
     p.add_layout(goal_label)
 
-    # Draw the search tree edges (all connections between nodes)
     source_edges = ColumnDataSource(edges_data)
     p.multi_line('xs', 'ys', source=source_edges, color="gray", alpha=0.3, line_width=1)
 
-    # Setup data source for the selected edge (highlighted parent connection on click)
     edge_hl_source = ColumnDataSource(data=dict(xs=[], ys=[]))
     p.multi_line('xs', 'ys', source=edge_hl_source, color="gold", line_width=4, alpha=0.8)
 
-    # Draw objects (both initial t0 and predicted) including labels
     source_t0_objs = ColumnDataSource(obj_t0_data)
     p.patches('xs', 'ys', source=source_t0_objs, color="blue", alpha=0.1, line_width=2, line_dash="dotted", legend_label="Objects t0")
     t0_labels = LabelSet(
@@ -300,35 +271,9 @@ def visualize_search_tree(
     )
     p.add_layout(pred_labels)
 
-    # Draw velocity vectors (orange arrows for the general time-step view)
-    source_vectors = ColumnDataSource(data=vec_map[t0])
-    arrow_glyph = Arrow(
-        end=OpenHead(line_color="darkorange", line_width=2, size=6),
-        x_start='x0', y_start='y0', x_end='x1', y_end='y1',
-        line_color="darkorange", line_width=2,
-        source=source_vectors
-    )
-    p.add_layout(arrow_glyph)
-
-    # Selected ego vehicle represented as a blue bounding box
-    ego_box_source = ColumnDataSource(data=dict(xs=[], ys=[]))
-    p.patches('xs', 'ys', source=ego_box_source, color="dodgerblue", alpha=0.4, line_color="darkblue", line_width=2, legend_label="Selected Ego Node")
-
-    # Selected velocity vector represented as a blue arrow
-    selected_vector_source = ColumnDataSource(data=dict(x0=[], y0=[], x1=[], y1=[]))
-    sel_arrow_glyph = Arrow(
-        end=OpenHead(line_color="dodgerblue", line_width=3, size=8),
-        x_start='x0', y_start='y0', x_end='x1', y_end='y1',
-        line_color="dodgerblue", line_width=3,
-        source=selected_vector_source
-    )
-    p.add_layout(sel_arrow_glyph)
-
-    # Separate renderer for highlighting the parent node (golden frame)
     parent_source = ColumnDataSource(data=dict(x=[], y=[]))
     p.scatter('x', 'y', size=20, fill_color="gold", fill_alpha=0.8, line_color="black", line_width=2, source=parent_source)
 
-    # Draw the actual tree nodes as a scatter plot
     source_nodes = ColumnDataSource(nodes_data)
     nodes_renderer = p.scatter(
         x='x', y='y', size={'field': 'size'}, source=source_nodes,
@@ -338,6 +283,18 @@ def visualize_search_tree(
         line_alpha={'field': 'line_alpha'},
         line_width={'field': 'line_width'}
     )
+    
+    ego_box_source = ColumnDataSource(data=dict(xs=[], ys=[]))
+    p.patches('xs', 'ys', source=ego_box_source, color="dodgerblue", alpha=0.4, line_color="darkblue", line_width=2, legend_label="Selected Ego Node")
+
+    selected_vector_source = ColumnDataSource(data=dict(x0=[], y0=[], x1=[], y1=[]))
+    sel_arrow_glyph = Arrow(
+        end=OpenHead(line_color="dodgerblue", line_width=3, size=8),
+        x_start='x0', y_start='y0', x_end='x1', y_end='y1',
+        line_color="dodgerblue", line_width=3,
+        source=selected_vector_source
+    )
+    p.add_layout(sel_arrow_glyph)
 
     color_bar = ColorBar(color_mapper=mapper, label_standoff=12, border_line_color=None, location=(0,0))
     p.add_layout(color_bar, 'right')
@@ -352,7 +309,6 @@ def visualize_search_tree(
     ])
     p.add_tools(hover)
 
-    # Info label box for displaying detailed node metadata on click
     info_source = ColumnDataSource(data=dict(x=[], y=[], text=[]))
     labels_info = LabelSet(
         x='x', y='y', text='text', source=info_source,
@@ -362,7 +318,6 @@ def visualize_search_tree(
     )
     p.add_layout(labels_info)
 
-    # Labels for selected node ID, parent ID, and edge distance
     edge_label_source = ColumnDataSource(data=dict(x=[], y=[], text=[]))
     labels_edge = LabelSet(
         x='x', y='y', text='text', source=edge_label_source,
@@ -372,8 +327,6 @@ def visualize_search_tree(
     )
     p.add_layout(labels_edge)
     
-    # JavaScript Callback for Node Click (Tap Event)
-    # Extracts the pre-computed node geometry and forces a redraw of the highlight layers
     source_nodes.selected.js_on_change('indices', CustomJS(args=dict(
         source=source_nodes, 
         info_source=info_source, 
@@ -390,12 +343,10 @@ def visualize_search_tree(
             const ny = source.data['y'][idx];
             const n_id = source.data['id'][idx];
             
-            // 1. Update info label box
             info_source.data['x'] = [nx];
             info_source.data['y'] = [ny];
             info_source.data['text'] = [source.data['details_str'][idx]];
             
-            // 2. Update parent highlights and distance text
             const px = source.data['parent_x'][idx];
             const py = source.data['parent_y'][idx];
             
@@ -424,7 +375,6 @@ def visualize_search_tree(
                 edge_label_source.data['text'] = [];
             }
             
-            // 3. Set ego bounding box & vector highlight using pre-calculated arrays
             ego_box_source.data['xs'] = [source.data['ego_box_xs'][idx]];
             ego_box_source.data['ys'] = [source.data['ego_box_ys'][idx]];
             
@@ -434,7 +384,6 @@ def visualize_search_tree(
             selected_vector_source.data['y1'] = [source.data['vec_y1'][idx]];
             
         } else {
-            // Clear all highlights and labels if clicked outside a node
             info_source.data['x'] = [];
             info_source.data['y'] = [];
             info_source.data['text'] = [];
@@ -455,7 +404,6 @@ def visualize_search_tree(
             selected_vector_source.data['y1'] = [];
         }
         
-        // Emit changes to trigger a canvas redraw
         info_source.change.emit();
         parent_source.change.emit();
         edge_hl_source.change.emit();
@@ -470,26 +418,21 @@ def visualize_search_tree(
     slider = Slider(start=sorted_times[0], end=sorted_times[-1], value=sorted_times[0], step=cfg.planner.dt_sim, title="Timestamp [ms]")
     search_input = TextInput(title="Search Node ID:", placeholder="Enter ID...")
 
-    # JavaScript Callback for the Time Slider
-    # Handles dynamic opacity changes to fade out past/future nodes
     slider_callback = CustomJS(
         args=dict(
             source_nodes=source_nodes, 
             source_objs=source_pred_objs,
-            source_vectors=source_vectors,
             info_source=info_source,
             parent_source=parent_source,
             edge_hl_source=edge_hl_source,
             edge_label_source=edge_label_source,
             ego_box_source=ego_box_source,
             selected_vector_source=selected_vector_source,
-            obj_map_json=json.dumps(obj_pred_map),
-            vec_map_json=json.dumps(vec_map)
+            obj_map_json=json.dumps(obj_pred_map)
         ), 
         code="""
         const t_sel = cb_obj.value;
         
-        // 1. Update node opacities based on the selected timestamp
         const times = source_nodes.data['timestamp'];
         const fill_alpha = source_nodes.data['fill_alpha'];
         const line_alpha = source_nodes.data['line_alpha'];
@@ -511,7 +454,6 @@ def visualize_search_tree(
         }
         source_nodes.change.emit();
         
-        // 2. Hide popups and highlights when time changes to avoid ghost artifacts
         info_source.data['x'] = [];
         info_source.data['y'] = [];
         info_source.data['text'] = [];
@@ -540,7 +482,6 @@ def visualize_search_tree(
         selected_vector_source.data['y1'] = [];
         selected_vector_source.change.emit();
         
-        // 3. Update predicted objects (including labels) using JSON mappings
         const str_t = t_sel.toString();
         const obj_map = JSON.parse(obj_map_json);
         if (obj_map[str_t]) {
@@ -557,25 +498,9 @@ def visualize_search_tree(
             source_objs.data['text'] = [];
         }
         source_objs.change.emit();
-        
-        // 4. Update velocity vectors (the general orange vectors for the active timeframe)
-        const vec_map = JSON.parse(vec_map_json);
-        if (vec_map[str_t]) {
-            source_vectors.data['x0'] = vec_map[str_t]['x0'];
-            source_vectors.data['y0'] = vec_map[str_t]['y0'];
-            source_vectors.data['x1'] = vec_map[str_t]['x1'];
-            source_vectors.data['y1'] = vec_map[str_t]['y1'];
-        } else {
-            source_vectors.data['x0'] = [];
-            source_vectors.data['y0'] = [];
-            source_vectors.data['x1'] = [];
-            source_vectors.data['y1'] = [];
-        }
-        source_vectors.change.emit();
     """)
     slider.js_on_change('value', slider_callback)
 
-    # JavaScript Callback for the Search Function
     search_callback = CustomJS(
         args=dict(source_nodes=source_nodes, slider=slider),
         code="""
@@ -586,11 +511,9 @@ def visualize_search_tree(
         const idx = ids.indexOf(search_val);
         
         if (idx !== -1) {
-            // Jump slider to the corresponding time of the found node
             const ts = source_nodes.data['timestamp'][idx];
             slider.value = ts; 
             
-            // Select the node (this triggers the tap JS callback automatically to show details)
             source_nodes.selected.indices = [idx];
         } else {
             console.log("ID " + search_val + " not found in tree.");
