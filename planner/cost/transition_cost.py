@@ -97,13 +97,13 @@ def cost_target_speed_delta(
     max_penalty: float = 1e6             
 ) -> float:
     """
-    Calculates the cost for deviating from the target speed. Applies a linear penalty 
-    for driving too slow and an exponential penalty barrier for driving too fast.
+    Calculates the cost for deviating from the target speed. 
+    Applies a quadratic penalty for driving too slow and an exponential penalty barrier for driving too fast.
 
     Args:
         curr_state (EgoStateStamped): The current state of the ego vehicle.
         target_speed (float): The desired target speed [m/s].
-        weight_underspeed (float): Linear weight applied when velocity is below target.
+        weight_underspeed (float): Quadratic weight applied when velocity is below target.
         weight_overspeed (float): Base weight applied when velocity exceeds target.
         exp_growth_factor (float): Factor controlling the steepness of the overspeed exponential curve.
         max_penalty (float): Absolute maximum cost limit to prevent math overflows.
@@ -117,14 +117,16 @@ def cost_target_speed_delta(
     delta_v = current_speed - target_speed
     
     if delta_v < 0:
-        # Linear penalty for underspeed
-        return weight_underspeed * abs(delta_v)
+        # Quadratic penalty for underspeed
+        # Squaring the deviation allows smooth behavior near the target speed 
+        # while heavily penalizing large velocity deficits.
+        return weight_underspeed * (delta_v ** 2)
         
     # Exponential barrier for overspeed with overflow protection
     safe_exponent = min(exp_growth_factor * delta_v, 50.0)
     raw_cost = weight_overspeed * (math.exp(safe_exponent) - 1.0)
     
-    return min(raw_cost, max_penalty) 
+    return min(raw_cost, max_penalty)
 
 
 
