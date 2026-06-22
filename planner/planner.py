@@ -1,74 +1,79 @@
-from models.models import *
-from anytree import NodeMixin
-from anytree.search import findall
-from planner.motion_primitives import MotionPrimitive
+import math
+import time
+import heapq
+from typing import Optional, List
+
+from omegaconf import DictConfig
+from shapely.geometry import Polygon
+
+from models.models import PlanningRequest, PlanResult, EgoStateStamped, Trajectory, EgoInput, GoalRegion
 from planner.motion_primitives import get_motion_primitives
 from planner.state_node import StateNode
-from shapely.geometry import Polygon
 from motion.bicycle import kinematic_bicycle
-import heapq
-import math
-from omegaconf import DictConfig, OmegaConf
-from utils.helper import convert_cfg_to_native
-import time
-
-from utils.helper import get_magnitude, get_signed_magnitude
+from utils.helper import get_signed_magnitude
 from planner.cost.cost import calculate_node_cost, calculate_heuristic_cost, calculate_total_cost
 
+
 class IDProvider:
+    """
+    Provides unique, incrementing integer IDs for search tree nodes.
+    """
     def __init__(self, start_id=0):
         self.current_id = start_id
         
-    def get_id(self):
+    def get_id(self) -> int:
         result = self.current_id
         self.current_id += 1
         return result
 
 
-import math
-import time
-import heapq
-from typing import Optional
-
-# (Assuming other imports and models remain the same)
-
-import math
-import time
-import heapq
-from typing import Optional
-
 def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> PlanResult:
     """
-    Computes a trajectory using a Hybrid A* search algorithm.
+    Computes a trajectory using a Hybrid A* search algorithm with state pruning.
 
     This function expands a search tree from the vehicle's starting state towards a goal region. 
     It evaluates dynamically feasible motion primitives and prioritizes nodes based on 
-    accumulated path costs and a heuristic estimate to the goal. The search is constrained 
-    by physical limits, a maximum horizon depth, and a strict time budget.
+    accumulated path costs and a heuristic estimate to the goal. 
+    
+    It utilizes a grid-based spatial hashing technique (State Pruning) to discard 
+    duplicate states that have similar coordinates and kinematics at the same time step.
 
     Args:
         request (PlanningRequest): The planning request containing the initial state, 
-                                   the environment, the goal region, and target speed.
+                                   the predicted environment, the goal region, and target speed.
         cfg (DictConfig): The Hydra configuration object containing parameters for the 
                           planner, cost weights, motion primitives, and vehicle dynamics.
         debug (bool): If True, prints detailed performance KPIs and statistics to the console.
 
     Returns:
         PlanResult: An object containing the success flag, the final trajectory (if successful), 
-                    the total cost, and a diagnostic status message.
+                    the total cost, a diagnostic status message, and the root node.
     """
 
-    cfg = convert_cfg_to_native(cfg)
+    if hasattr(cfg.planner, "tolerances"):
+        tol_pos = cfg.planner.tolerances.get("pos", 0.5)
+        tol_yaw = cfg.planner.tolerances.get("yaw", 0.087)
+        tol_vel = cfg.planner.tolerances.get("velocity", 0.5)
+        tol_acc = cfg.planner.tolerances.get("acceleration", 0.5)
+    else:
+        tol_pos, tol_yaw, tol_vel, tol_acc = 0.5, 0.087, 0.5, 0.5
+
+    inv_tol_pos = 1.0 / tol_pos
+    inv_tol_yaw = 1.0 / tol_yaw
+    inv_tol_vel = 1.0 / tol_vel
+    inv_tol_acc = 1.0 / tol_acc
 
     open_nodes_pq: list[StateNode] = []
     end_nodes_pq: list[StateNode] = []
     id_provider = IDProvider()
     
+    visited_states = set()
+    
     max_depth = math.ceil(cfg.planner.horizon / cfg.planner.dt_sim)
     call_time = time.perf_counter()
 
-    # --- Debug Tracking Variables ---
     total_generated_nodes = 1  
+    total_pruned_nodes = 0
     max_depth_reached = 0
     ttfs_sec: Optional[float] = None
 
@@ -78,7 +83,8 @@ def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> Plan
             goal_region_reached=None,
             trajectory=None,
             cost=None,
-            status_message='Vehicle is already in the goal region at function call.'
+            status_message='Vehicle is already in the goal region at function call.',
+            debug_root_node=None
         )
 
     root = StateNode(
@@ -95,6 +101,18 @@ def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> Plan
     )
     
     heapq.heappush(open_nodes_pq, root)
+
+    r_v = get_signed_magnitude(root.state_stamped.state.velocity, root.state_stamped.state.yaw)
+    r_a = get_signed_magnitude(root.state_stamped.state.acceleration, root.state_stamped.state.yaw)
+    root_key = (
+        root.state_stamped.timestamp,
+        int(root.state_stamped.state.pos.x * inv_tol_pos),
+        int(root.state_stamped.state.pos.y * inv_tol_pos),
+        int(((root.state_stamped.state.yaw + math.pi) % (2 * math.pi)) * inv_tol_yaw),
+        int(r_v * inv_tol_vel),
+        int(r_a * inv_tol_acc)
+    )
+    visited_states.add(root_key)
 
     while True:
         loop_start_time = time.perf_counter()
@@ -116,7 +134,6 @@ def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> Plan
         )
         
         for mp in motion_primitives:
-            total_generated_nodes += 1
             
             curr_state = kinematic_bicycle(
                 stamped_state=prev_stamped_state, 
@@ -124,6 +141,27 @@ def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> Plan
                 dt=mp.dt, 
                 vehicle_params=cfg.vehicle
             )
+            
+            c_pos = curr_state.state.pos
+            c_yaw = curr_state.state.yaw
+            c_v = get_signed_magnitude(curr_state.state.velocity, c_yaw)
+            c_a = get_signed_magnitude(curr_state.state.acceleration, c_yaw)
+            
+            state_key = (
+                curr_state.timestamp,
+                int(c_pos.x * inv_tol_pos),
+                int(c_pos.y * inv_tol_pos),
+                int(((c_yaw + math.pi) % (2 * math.pi)) * inv_tol_yaw),
+                int(c_v * inv_tol_vel),
+                int(c_a * inv_tol_acc)
+            )
+            
+            if state_key in visited_states:
+                total_pruned_nodes += 1
+                continue
+                
+            visited_states.add(state_key)
+            total_generated_nodes += 1
             
             path_cost = prev_node.path_cost + prev_node.node_cost
 
@@ -143,8 +181,6 @@ def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> Plan
 
             goal_region_reached = is_in_goal_region(curr_state, request.goal_region, cfg.vehicle)
             
-           
-
             node_depth = prev_node.node_depth + 1
             max_depth_reached = max(max_depth_reached, node_depth)
 
@@ -160,7 +196,6 @@ def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> Plan
                 heapq.heappush(open_nodes_pq, new_node)
             else:
                 heapq.heappush(end_nodes_pq, new_node)
-                 # Record Time to First Solution (TTFS)
                 if ttfs_sec is None:
                     ttfs_sec = time.perf_counter() - call_time
         
@@ -174,7 +209,6 @@ def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> Plan
         if (time_elapsed + loop_duration + extract_time_buffer_sec > time_budget_sec):
             break
 
-    # --- Result Construction ---
     best_end_node = None
     if end_nodes_pq:
         best_end_node = heapq.heappop(end_nodes_pq)
@@ -212,12 +246,14 @@ def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> Plan
             debug_root_node=root
         )
 
-    # --- Debug Console Output ---
     if debug:
         total_time_ms = (time.perf_counter() - call_time) * 1000.0
         ms_per_node = total_time_ms / total_generated_nodes if total_generated_nodes > 0 else 0.0
         efficiency_pct = (path_length_raw / total_generated_nodes) * 100 if total_generated_nodes > 0 else 0.0
         ttfs_str = f"{(ttfs_sec * 1000.0):.2f} ms" if ttfs_sec is not None else "N/A (Goal not reached)"
+
+        total_attempted_nodes = total_generated_nodes + total_pruned_nodes
+        pruned_pct = (total_pruned_nodes / total_attempted_nodes) * 100 if total_attempted_nodes > 0 else 0.0
 
         print("\n" + "="*50)
         print("PLANNER DEBUG STATISTICS")
@@ -226,7 +262,11 @@ def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> Plan
         print(f"Compute Time      : {total_time_ms:.2f} ms")
         print(f"TTFS              : {ttfs_str}")
         print(f"Speed             : {ms_per_node:.4f} ms / node")
-        print(f"Total Nodes Gen.  : {total_generated_nodes}")
+        print("-" * 50)
+        print(f"Nodes Attempted   : {total_attempted_nodes}")
+        print(f"Nodes Generated   : {total_generated_nodes}")
+        print(f"Nodes Pruned      : {total_pruned_nodes} ({pruned_pct:.1f} % saved)")
+        print("-" * 50)
         print(f"Search Efficiency : {efficiency_pct:.2f} %")
         print(f"Max Depth Reached : {max_depth_reached} / {max_depth}")
         print(f"Success           : {success}")
@@ -234,9 +274,19 @@ def plan(request: PlanningRequest, cfg: DictConfig, debug: bool = False) -> Plan
 
     return result          
 
+
 def extract_path_stamped_states(end_node: StateNode) -> List[EgoStateStamped]:
+    """
+    Backtracks from the end node through parent links to extract the final trajectory sequence.
+
+    Args:
+        end_node (StateNode): The successful node in the goal region.
+
+    Returns:
+        List[EgoStateStamped]: Chronological sequence of stamped states.
+    """
     node = end_node
-    path:List[EgoStateStamped] = []
+    path: List[EgoStateStamped] = []
 
     while node is not None:
         path.append(node.state_stamped)
@@ -244,8 +294,6 @@ def extract_path_stamped_states(end_node: StateNode) -> List[EgoStateStamped]:
 
     path.reverse()
     return path
-
-
 
 
 def is_in_goal_region(
@@ -265,19 +313,15 @@ def is_in_goal_region(
         bool: True if the vehicle's bounding box overlaps with the goal region, False otherwise.
     """
     
-    # --- 1. Construct Vehicle Polygon ---
     ego_x = state_stamped.state.pos.x
     ego_y = state_stamped.state.pos.y
     ego_yaw = state_stamped.state.yaw
     
-    # Calculate distance from rear axle to the geometric center of the vehicle
     axle_to_center = (veh_cfg.length / 2.0) - veh_cfg.rear_to_wheel
     
-    # Shift to geometric center
     ego_center_x = ego_x + axle_to_center * math.cos(ego_yaw)
     ego_center_y = ego_y + axle_to_center * math.sin(ego_yaw)
     
-    # Create the vehicle bounding box polygon
     ego_polygon = _create_oriented_bounding_box(
         center_x=ego_center_x, 
         center_y=ego_center_y, 
@@ -285,8 +329,6 @@ def is_in_goal_region(
         length=veh_cfg.length, 
         yaw=ego_yaw
     )
-    
-    # --- 2. Construct Goal Region Polygon ---
     
     goal_polygon = _create_oriented_bounding_box(
         center_x=goal_region.center.x, 
@@ -296,7 +338,6 @@ def is_in_goal_region(
         yaw=goal_region.yaw
     )
     
-    # --- 3. Check for Intersection ---
     return ego_polygon.intersects(goal_polygon)
 
 
@@ -313,19 +354,16 @@ def _create_oriented_bounding_box(
     cos_y = math.cos(yaw)
     sin_y = math.sin(yaw)
     
-    # Half dimensions
     hw = width / 2.0
     hl = length / 2.0
     
-    # The 4 corners relative to the center (unrotated)
     corners_local = [
-        (hl, hw),   # Front Left
-        (hl, -hw),  # Front Right
-        (-hl, -hw), # Rear Right
-        (-hl, hw)   # Rear Left
+        (hl, hw),   
+        (hl, -hw),  
+        (-hl, -hw), 
+        (-hl, hw)   
     ]
     
-    # Rotate and translate corners to global coordinates
     corners_global = []
     for lx, ly in corners_local:
         gx = center_x + (lx * cos_y - ly * sin_y)
