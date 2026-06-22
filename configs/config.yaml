@@ -4,5 +4,5 @@ defaults:
   - planner: default_planner_config
   - controller: default_controller_config
   - vehicle: renault_twizy
-  - noise: default_noise
-  - scenario: overtake_scenario
+  - noise: no_noise
+  - scenario: no_objects_scenario

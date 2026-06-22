@@ -132,9 +132,11 @@ def calculate_node_cost(
     # ---------------------------------------------------------
     # 5. Safety & Compliance: Lane Keeping
     # ---------------------------------------------------------
-    lane_id, dist_to_center, yaw_offset, occlusion, is_opposite = get_ego_lane_info(
+    lane_id, dist_to_center, yaw_offset, occlusion, is_opposite, target_speed = get_ego_lane_info(
         ego_state=curr_state.state,
-        vehicle_cfg=veh_cfg,
+        ego_length = veh_cfg.length,
+        ego_width = veh_cfg.width,
+        ego_rear_to_wheel = veh_cfg.rear_to_wheel,
         lanes=request.environment.lanes
     )
     
@@ -168,7 +170,7 @@ def calculate_heuristic_cost(
     state: EgoStateStamped, 
     request: PlanningRequest, 
     veh_cfg: DictConfig, 
-    max_a_lat: float
+    mp_cfg: DictConfig
 ) -> float:
     """
     Calculates the heuristic cost from a given state to the goal region using a Dubins path.
@@ -177,17 +179,17 @@ def calculate_heuristic_cost(
         state (EgoStateStamped): The starting state for the heuristic calculation.
         request (PlanningRequest): The planning request containing the goal region.
         veh_cfg (DictConfig): The Hydra configuration object containing vehicle dimensions and limits.
-        max_a_lat (float): The maximum allowable lateral acceleration [m/s^2].
+        veh_cfg (DictConfig): The Hydra configuration object containing the motion primitives configuration.
 
     Returns:
         float: The estimated distance (Dubins path length) to the goal region.
     """
     
     # 1. Calculate scalar speed from Vector2D
-    current_speed = math.hypot(state.state.velocity.x, state.state.velocity.y)
+    current_speed = get_signed_magnitude(state.state.velocity, state.state.yaw)
 
     # 2. Get max steer angle for this specific speed
-    max_steer = _get_max_steering_angle(current_speed, max_a_lat, veh_cfg)
+    max_steer = _get_max_steering_angle(current_speed, veh_cfg, mp_cfg)
     
     # 3. Calculate curvature using the WHEELBASE, not the total length
     curvature = math.tan(max_steer) / veh_cfg.wheel_base
