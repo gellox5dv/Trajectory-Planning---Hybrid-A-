@@ -9,22 +9,22 @@ search:
 # Transition Cost Multipliers 
 # ---------------------------------------------------------
 transition_weights:
-  jerk_long: 2.0               # Multiplier for longitudinal jerk
-  jerk_lat: 3.5                # Multiplier for lateral jerk
-  accel_long: 1.5              # Multiplier for longitudinal acceleration
-  accel_lat: 5.0               # Multiplier for lateral acceleration
-  speed: 6.0                   # Multiplier for the total speed cost
+  jerk_long: 2.5               # Multiplier for longitudinal jerk
+  jerk_lat: 5.0 #3.5                # Multiplier for lateral jerk
+  accel_long: 4.0 #1.5              # Multiplier for longitudinal acceleration
+  accel_lat: 8.0 #5.0               # Multiplier for lateral acceleration
+  speed: 4.0                   # Multiplier for the total speed cost
   objects: 2.0                 # Multiplier for the total object cost
-  lane_center: 220.0             # Multiplier for lateral deviation from lane center
-  lane_yaw: 30             # Multiplier for heading error relative to lane direction
+  lane_center: 22.00 #220.0             # Multiplier for lateral deviation from lane center
+  lane_yaw: 25 #15 #30             # Multiplier for heading error relative to lane direction
   lane_occlusion: 50.0         # Multiplier for leaving the drivable road area
-  opposite_lane: 3.0           # Multiplier for the oncoming traffic penalty
+  opposite_lane: 0.0 #1.2 #3.0           # Multiplier for the oncoming traffic penalty
 
 # ---------------------------------------------------------
 # Function-Specific Parameters
 # ---------------------------------------------------------
 cost_target_speed_delta:
-  weight_underspeed: 0.3       # Linear penalty for driving too slow
+  weight_underspeed: 0.7 #1.5       # Linear penalty for driving too slow
   weight_overspeed: 10.0       # Base weight for driving too fast
   exp_growth_factor: 1.5       # Steepness of the overspeed exponential curve
   max_penalty: 1000000.0       # Absolute maximum cost limit (1e6)
@@ -38,7 +38,7 @@ cost_objects_force_field:
   accel_expansion_factor_front: 1     # Multiplier to extend object/ego force field based on acceleration (front) [s^2]
   accel_expansion_factor_rear: 0.3      # Multiplier to extend object/ego force field based on acceleration (rear) [s^2]
   weight_ff_high: 500.0                 # High penalty weight for intersecting high force field
-  decay_factor_high: 0.1                # Decay rate (lambda) for the exponential cost within the FFH
+  decay_factor_high: 0.25 #0.3                # Decay rate (lambda) for the exponential cost within the FFH
   weight_ff_low: 0.0 #100.0                    # Base proximity weight outside the high force field
   d_ffl: 20.0                           # Maximum distance [m] where the FFL exerts influence (quadratic decay to 0)
   lse_alpha: 1.0                        # Alpha scaling parameter for the LogSumExp aggregation
