@@ -1464,7 +1464,7 @@ def visualize_overtake_decision_replay(
         marker="^",
         edgecolors="black",
         linewidths=0.5,
-        label="Oncoming vehicle constant velocity",
+        label="Oncoming vehicle constant acceleration",
         zorder=3,
     )
     color_bar = fig.colorbar(oncoming_scatter, ax=ax_scene, pad=0.01)
