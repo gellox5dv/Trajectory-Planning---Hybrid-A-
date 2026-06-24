@@ -17,7 +17,7 @@ class Simulation:
             state = EgoState(
                 pos = Vector2D(x = 50.0, y = 2.0),
                 yaw = 0.0,
-                velocity = get_vector(5.0 + 8/9, 0.0),
+                velocity = get_vector(13.0 + 8/9, 0.0),
                 acceleration = get_vector(0.0, 0.0),
                 steering_angle = 0.0
             )
