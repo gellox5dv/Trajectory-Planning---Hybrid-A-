@@ -33,7 +33,7 @@ def main(cfg: DictConfig) -> None:
     newest_trajectory = None
     
     # Timing constants for the simulation loop
-    SIM_STEP_MS = 100
+    SIM_STEP_MS = 50
     PLAN_EXECUTION_MS = 4000
     MAX_SIM_STEPS = int(PLAN_EXECUTION_MS / SIM_STEP_MS)
 
