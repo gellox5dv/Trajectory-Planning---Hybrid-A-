@@ -149,8 +149,9 @@ def main(cfg: DictConfig) -> None:
                 env=curr_env,
                 ego=ego_state,
                 vehicle_params=cfg.vehicle,
-                trajectory=newest_trajectory, 
-                goal_region=goal_region
+                trajectory=newest_trajectory,
+                goal_region=goal_region,
+                path=sim.ego_history
             )
             
             # 5. Enforce real-time execution limits

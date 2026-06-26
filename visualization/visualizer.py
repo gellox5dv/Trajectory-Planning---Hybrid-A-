@@ -22,7 +22,7 @@ for key in ['f', 'F']:
         plt.rcParams['keymap.fullscreen'].remove(key)
 
 
-def visualize_scene(env, ego, vehicle_params, trajectory=None, goal_region=None) -> None:
+def visualize_scene(env, ego, vehicle_params, trajectory=None, goal_region=None, path=None) -> None:
     """
     Main entry point. Call once per simulation step for live visualization.
     """
@@ -56,7 +56,7 @@ def visualize_scene(env, ego, vehicle_params, trajectory=None, goal_region=None)
     _draw_objects(_ax, env)
     _draw_ego(_ax, ego, vehicle_params)
     _draw_trajectory(_ax, trajectory)
-
+    _draw_path(_ax, path)
     # axis formatting
     title_suffix = "(Follow Mode)" if _follow_ego else "(Free Camera - Press 'F' to follow)"
     _ax.set_title(f"Trajectory Visualization {title_suffix}")
@@ -419,6 +419,23 @@ def _draw_box(
                 alpha=0.8,
             )
         )
+
+
+def _draw_path(ax, path) -> None:
+    """
+    Draw the historical path of the ego vehicle as a yellow line with small yellow dots.
+    Safe to call with path=None — draws nothing.
+    """
+    if path is None or len(path) < 2:
+        return
+
+    states = [_get_ego_state(s) for s in path]
+
+    xs = [state.pos.x for state in states]
+    ys = [state.pos.y for state in states]
+
+    ax.plot(xs, ys, linewidth=1.5, color="yellow", label="Ego Path")
+    # ax.scatter(xs, ys, s=5, color="yellow", marker=".", zorder=6)  # Optional: small dots for each historical position
 
 
 # ─── Camera View ─────────────────────────────────────────────────────────────

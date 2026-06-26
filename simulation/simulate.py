@@ -116,7 +116,7 @@ class Simulation:
     def step(self, acc: float, steer_rate: float, dt: int) -> None:
         self.ego_state.state = self.bicycle_model.step(acc, steer_rate, dt)
         self.ego_state.timestamp += dt
-        self.ego_history.append(self.ego_state)
+        self.ego_history.append(copy.deepcopy(self.ego_state))
 
         self.curr_env.objects = predict_motion_constant_velocity(self.curr_env.objects, prediction_horizon=dt, dt=dt, last_only=True)
-        self.obj_history.append(self.curr_env.objects)
+        self.obj_history.append(copy.deepcopy(self.curr_env.objects))
