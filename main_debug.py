@@ -33,7 +33,7 @@ def main(cfg: DictConfig) -> None:
     newest_trajectory = None
     
     # Timing constants for the simulation loop
-    SIM_STEP_MS = 100
+    SIM_STEP_MS = 50
     PLAN_EXECUTION_MS = 4000
     MAX_SIM_STEPS = int(PLAN_EXECUTION_MS / SIM_STEP_MS)
 
@@ -132,7 +132,7 @@ def main(cfg: DictConfig) -> None:
             
             if newest_trajectory is not None:
                 try:
-                    acc, steer_rate = controller.compute_control(ego_state, newest_trajectory)
+                    acc, steer_rate = controller.compute_control(ego_state, newest_trajectory)[0]
                 except Exception as e:
                     print(f"Controller failed ({e}). Triggering emergency brake.")
                     acc = cfg.vehicle.max_deceleration
@@ -149,8 +149,9 @@ def main(cfg: DictConfig) -> None:
                 env=curr_env,
                 ego=ego_state,
                 vehicle_params=cfg.vehicle,
-                trajectory=newest_trajectory, 
-                goal_region=goal_region
+                trajectory=newest_trajectory,
+                goal_region=goal_region,
+                path=sim.ego_history
             )
             
             # 5. Enforce real-time execution limits
