@@ -4,7 +4,7 @@ import casadi as ca
 import math
 import numpy as np
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from omegaconf import DictConfig
 
 from models.models import (
@@ -54,6 +54,10 @@ class MPCController:
         # Control effort penalties
         self.Ra = controller_cfg.get("R_a", 0.1)
         self.Rsr = controller_cfg.get("R_sr", 0.1)
+
+        # Lateral acceleration shaping
+        self.max_a_lat = controller_cfg.get("max_a_lat", 3.0)
+        self.Ralat = controller_cfg.get("R_alat", 5.0)
 
         # Input rate penalties
         self.Rda = controller_cfg.get("R_da", 1.0)
@@ -105,10 +109,15 @@ class MPCController:
 
             e = X[:, k] - REF[:, k]
 
+            yaw_error = ca.atan2(
+                ca.sin(X[2, k] - REF[2, k]),
+                ca.cos(X[2, k] - REF[2, k]),
+            )
+
             cost += (
                 self.Qx * e[0] ** 2
                 + self.Qy * e[1] ** 2
-                + self.Qyaw * e[2] ** 2
+                + self.Qyaw * yaw_error ** 2
                 + self.Qv * e[3] ** 2
                 + self.Qdelta * e[4] ** 2
             )
@@ -117,6 +126,13 @@ class MPCController:
                 self.Ra * a**2
                 + self.Rsr * delta_rate**2
             )
+
+            a_lat = (v**2 / self.L) * ca.tan(delta)
+
+            cost += self.Ralat * a_lat**2
+
+            opti.subject_to(a_lat <= self.max_a_lat)
+            opti.subject_to(a_lat >= -self.max_a_lat)
 
             if k > 0:
 
@@ -148,11 +164,25 @@ class MPCController:
 
         terminal_error = X[:, self.N] - REF[:, self.N]
 
+        terminal_yaw_error = ca.atan2(
+            ca.sin(X[2, self.N] - REF[2, self.N]),
+            ca.cos(X[2, self.N] - REF[2, self.N]),
+        )
+
         cost += (
             self.Qx * terminal_error[0] ** 2
             + self.Qy * terminal_error[1] ** 2
-            + self.Qyaw * terminal_error[2] ** 2
+            + self.Qyaw * terminal_yaw_error ** 2
             + self.Qv * terminal_error[3] ** 2
+            + self.Qdelta * terminal_error[4] ** 2
+        )
+
+        opti.subject_to(
+            X[4, self.N] <= self.max_delta
+        )
+
+        opti.subject_to(
+            X[4, self.N] >= -self.max_delta
         )
 
         opti.subject_to(X[:, 0] == X0)
@@ -225,7 +255,8 @@ class MPCController:
         self,
         ego_state: EgoStateStamped,
         trajectory: Trajectory,
-    ) -> Tuple[float, float]:
+        first_only: bool = True,
+    ) -> List[Tuple[float, float]]:
 
         px = ego_state.state.pos.x
         py = ego_state.state.pos.y
@@ -281,15 +312,27 @@ class MPCController:
         )
 
         sol = self.opti.solve()
+        
+        if first_only:
+            u0 = sol.value(
+                self.U[:, 0]
+            )
 
-        u0 = sol.value(
-            self.U[:, 0]
-        )
+            acceleration = float(u0[0])
+            steering_rate = float(u0[1])
 
-        acceleration = float(u0[0])
-        steering_rate = float(u0[1])
+            return [(
+                acceleration,
+                steering_rate,
+            )]
+        
+        else:
 
-        return (
-            acceleration,
-            steering_rate,
-        )
+            u = []
+            
+            for i in range(self.N):
+                ui = sol.value(self.U[:, i])
+                acc, steer = float(ui[0]), float(ui[1])
+                u.append((acc, steer))
+            
+            return u

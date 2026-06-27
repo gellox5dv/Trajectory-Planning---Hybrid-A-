@@ -5,4 +5,4 @@ defaults:
   - controller: default_controller_config
   - vehicle: renault_twizy
   - noise: no_noise
-  - scenario: no_objects_scenario
+  - scenario: overtake_scenario
